@@ -25,3 +25,4 @@ net.netfilter.nf_conntrack_udp_timeout = {{ timeout.udp.other }}
 net.netfilter.nf_conntrack_udp_timeout_stream = {{ timeout.udp.stream }}
 
 net.netfilter.nf_conntrack_acct = {{ '1' if flow_accounting is vyos_defined else '0' }}
+net.netfilter.nf_conntrack_timestamp = {{ '1' if log.timestamp is vyos_defined else '0' }}

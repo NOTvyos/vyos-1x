@@ -39,6 +39,13 @@ INSTALL_IMAGE = [
     '--no-prompt',
     '--image-path',
 ]
+IMPORT_PKI = ['/opt/vyatta/bin/vyatta-op-cmd-wrapper', 'import']
+IMPORT_PKI_NO_PROMPT = [
+    '/usr/libexec/vyos/op_mode/pki.py',
+    '--action',
+    'import',
+    '--no-prompt',
+]
 REMOVE_IMAGE = [
     '/usr/libexec/vyos/op_mode/image_manager.py',
     '--action',
@@ -284,6 +291,14 @@ class ConfigSession(object):
 
     def remove_image(self, name):
         out = self.__run_command(REMOVE_IMAGE + [name])
+        return out
+
+    def import_pki(self, path):
+        out = self.__run_command(IMPORT_PKI + path)
+        return out
+
+    def import_pki_no_prompt(self, path):
+        out = self.__run_command(IMPORT_PKI_NO_PROMPT + path)
         return out
 
     def set_default_image(self, name):

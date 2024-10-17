@@ -28,7 +28,7 @@ airbag.enable()
 PRELOGIN_FILE = r'/etc/issue'
 PRELOGIN_NET_FILE = r'/etc/issue.net'
 POSTLOGIN_FILE = r'/etc/motd'
-POSTLOGIN_VYOS_FILE = r'/run/motd.d/01-vyos-nonproduction'
+POSTLOGIN_VYOS_FILE = r'/run/motd.d/01-vyos-techpreview_warning'
 
 default_config_data = {
     'issue': 'Welcome to VyOS - \\n \\l\n\n',
@@ -95,7 +95,7 @@ def apply(banner):
         render(POSTLOGIN_FILE, 'login/default_motd.j2', banner,
             permission=0o644, user='root', group='root')
 
-    render(POSTLOGIN_VYOS_FILE, 'login/motd_vyos_nonproduction.j2', banner,
+    render(POSTLOGIN_VYOS_FILE, 'login/techpreview_warning.j2', banner,
         permission=0o644, user='root', group='root')
 
     return None

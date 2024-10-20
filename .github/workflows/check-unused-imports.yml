@@ -1,11 +1,11 @@
 name: Check unused imports using Pylint
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - circinus
     paths:
       - '**'
-      # - '!.github/**' fix added test
+      - '!.github/**'
       - '!**/*.md'
   workflow_dispatch:
 
@@ -14,63 +14,6 @@ permissions:
   contents: read
 
 jobs:
-  # check-unused-imports:
-  #   uses: vyos/.github/.github/workflows/check-unused-imports.yml@T6789-unused-import-fix
-  #   secrets: inherit
   check-unused-imports:
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      contents: read
-    steps:
-
-      - name: Checkout pull request merge
-        uses: actions/checkout@v3
-        with:
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
-          repository: ${{ github.event.pull_request.base.repo.full_name }}
-
-      - uses: dorny/paths-filter@v3
-        id: py-changes
-        with:
-          filters: |
-            src:
-              - 'src/**'
-
-      - name: Set up Python
-        if: steps.py-changes.outputs.src == 'true'
-        uses: actions/setup-python@v3
-        with:
-          python-version: 3.11
-
-      - name: Install dependencies
-        if: steps.py-changes.outputs.src == 'true'
-        run: |
-          python -m pip install --upgrade pip
-          pip install pylint
-
-      - name: Check unused imports (pylint)
-        if: steps.py-changes.outputs.src == 'true'
-        run: |
-          pylint_files=$(git ls-files *.py src/migration-scripts)
-          set +e
-          output=$(pylint --disable=all --enable=W0611 $pylint_files)
-          exit_code=$?
-          set -e
-          echo "$output"
-          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          message=":white_check_mark: No issues found in *unused-imports* check."
-          if [[ $exit_code -ne 0 ]]; then
-            message=":x: Issues found in *unused-imports* check. "
-          fi
-          echo "WORKFLOW_MESSAGE=${message}. Please refer the [workflow run]($run_url)" >> $GITHUB_ENV
-          exit $exit_code
-
-      - name: Add PR comment
-        if: ${{ always() && env.WORKFLOW_MESSAGE != '' }}
-        uses: mshick/add-pr-comment@v2
-        with:
-          message: |-
-            ${{ env.WORKFLOW_MESSAGE }}
-          message-id: "UNUSED_IMPORTS_VALIDATION"
-          allow-repeats: false
+    uses: vyos/.github/.github/workflows/check-unused-imports.yml@circinus
+    secrets: inherit

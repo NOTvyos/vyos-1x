@@ -5,7 +5,7 @@ on:
       - circinus
     paths:
       - '**'
-      # - '!.github/**'
+      # - '!.github/**' fix added test
       - '!**/*.md'
   workflow_dispatch:
 

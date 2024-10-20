@@ -1,11 +1,11 @@
-name: Check for unused imports using Pylint
+name: Check unused imports using Pylint
 on:
   pull_request:
     branches:
       - circinus
     paths:
       - '**'
-      - '!.github/**'
+      # - '!.github/**'
       - '!**/*.md'
   workflow_dispatch:
 

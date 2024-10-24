@@ -15,5 +15,5 @@ permissions:
 
 jobs:
   check-unused-imports:
-    uses: vyos/.github/.github/workflows/check-unused-imports.yml@sagitta
+    uses: vyos/.github/.github/workflows/check-unused-imports.yml@circinus
     secrets: inherit

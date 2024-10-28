@@ -197,7 +197,7 @@ set system host-name 'r1'
 set system login user vyos authentication encrypted-password '$6$2Ta6TWHd/U$NmrX0x9kexCimeOcYK1MfhMpITF9ELxHcaBU/znBq.X2ukQOj61fVI2UYP/xBzP4QtiTcdkgs7WOQMHWsRymO/'
 set system login user vyos authentication plaintext-password ''
 set system option ctrl-alt-delete 'ignore'
-set system option performance 'latency'
+set system option performance 'network-latency'
 set system option startup-beep
 set system syslog global facility all level 'debug'
 set system syslog host 172.16.100.1 facility all level 'warning'

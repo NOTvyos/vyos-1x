@@ -21,6 +21,7 @@ from base_vyostest_shim import VyOSUnitTestSHIM
 
 from vyos.utils.file import read_file
 from vyos.utils.process import process_named_running
+from vyos.xml_ref import default_value
 
 PROCESS_NAME = 'rsyslogd'
 RSYSLOG_CONF = '/etc/rsyslog.d/00-vyos.conf'
@@ -101,6 +102,29 @@ class TestRSYSLOGService(VyOSUnitTestSHIM.TestCase):
             self.assertIn(e, config)
         # Check for running process
         self.assertTrue(process_named_running(PROCESS_NAME))
+
+    def test_syslog_remote(self):
+        rhost = '169.254.0.1'
+        default_port = default_value(base_path + ['host', rhost, 'port'])
+
+        self.cli_set(base_path + ['global', 'facility', 'all', 'level', 'info'])
+        self.cli_set(base_path + ['global', 'facility', 'local7', 'level', 'debug'])
+        self.cli_set(base_path + ['host', rhost, 'facility', 'all', 'level', 'all'])
+        self.cli_set(base_path + ['host', rhost, 'protocol', 'tcp'])
+
+        self.cli_commit()
+
+        config = read_file(RSYSLOG_CONF)
+        self.assertIn(f'*.* @@{rhost}:{default_port}', config)
+
+        # Change default port and enable "octet-counting" mode
+        port = '10514'
+        self.cli_set(base_path + ['host', rhost, 'port', port])
+        self.cli_set(base_path + ['host', rhost, 'format', 'octet-counted'])
+        self.cli_commit()
+
+        config = read_file(RSYSLOG_CONF)
+        self.assertIn(f'*.* @@(o){rhost}:{port}', config)
 
 
 if __name__ == '__main__':

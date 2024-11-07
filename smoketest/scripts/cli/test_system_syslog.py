@@ -20,7 +20,6 @@ import unittest
 from base_vyostest_shim import VyOSUnitTestSHIM
 
 from vyos.utils.file import read_file
-from vyos.utils.process import cmd
 from vyos.utils.process import process_named_running
 
 PROCESS_NAME = 'rsyslogd'
@@ -80,20 +79,22 @@ class TestRSYSLOGService(VyOSUnitTestSHIM.TestCase):
         self.assertTrue(process_named_running(PROCESS_NAME))
 
     def test_syslog_global(self):
-        self.cli_set(['system', 'host-name', 'vyos'])
-        self.cli_set(['system', 'domain-name', 'example.local'])
+        hostname = 'vyos123'
+        domainname = 'example.local'
+        self.cli_set(['system', 'host-name', hostname])
+        self.cli_set(['system', 'domain-name', domainname])
         self.cli_set(base_path + ['global', 'marker', 'interval', '600'])
         self.cli_set(base_path + ['global', 'preserve-fqdn'])
         self.cli_set(base_path + ['global', 'facility', 'kern', 'level', 'err'])
 
         self.cli_commit()
 
-        config = cmd(f'sudo cat {RSYSLOG_CONF}')
+        config = read_file(RSYSLOG_CONF)
         expected = [
             '$MarkMessagePeriod 600',
             '$PreserveFQDN on',
             'kern.err',
-            '$LocalHostName vyos.example.local',
+            f'$LocalHostName {hostname}.{domainname}',
         ]
 
         for e in expected:

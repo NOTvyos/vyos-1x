@@ -36,11 +36,15 @@ class TestProtocolsBABEL(VyOSUnitTestSHIM.TestCase):
         # ensure we can also run this test on a live system - so lets clean
         # out the current configuration :)
         cls.cli_delete(cls, base_path)
+        cls.cli_delete(cls, ['policy', 'prefix-list'])
+        cls.cli_delete(cls, ['policy', 'prefix-list6'])
 
     def tearDown(self):
         # always destroy the entire babel configuration to make the processes
         # life as hard as possible
         self.cli_delete(base_path)
+        self.cli_delete(['policy', 'prefix-list'])
+        self.cli_delete(['policy', 'prefix-list6'])
         self.cli_commit()
 
         # check process health and continuity
@@ -126,6 +130,89 @@ class TestProtocolsBABEL(VyOSUnitTestSHIM.TestCase):
         self.assertIn(f' babel diversity-factor {diversity_factor}', frrconfig)
         self.assertIn(f' babel resend-delay {resend_delay}', frrconfig)
         self.assertIn(f' babel smoothing-half-life {smoothing_half_life}', frrconfig)
+
+    def test_babel_distribute_list(self):
+        access_list_in4 = '40'
+        access_list_out4 = '50'
+        access_list_in4_iface = '44'
+        access_list_out4_iface = '55'
+        access_list_in6 = 'AL-foo-in6'
+        access_list_out6 = 'AL-foo-out6'
+
+        prefix_list_in4 = 'PL-foo-in4'
+        prefix_list_out4 = 'PL-foo-out4'
+        prefix_list_in6 = 'PL-foo-in6'
+        prefix_list_out6 = 'PL-foo-out6'
+
+        self.cli_set(['policy', 'access-list', access_list_in4])
+        self.cli_set(['policy', 'access-list', access_list_out4])
+        self.cli_set(['policy', 'access-list6', access_list_in6])
+        self.cli_set(['policy', 'access-list6', access_list_out6])
+
+        self.cli_set(['policy', 'access-list', f'{access_list_in4_iface}'])
+        self.cli_set(['policy', 'access-list', f'{access_list_out4_iface}'])
+
+        self.cli_set(['policy', 'prefix-list', prefix_list_in4])
+        self.cli_set(['policy', 'prefix-list', prefix_list_out4])
+        self.cli_set(['policy', 'prefix-list6', prefix_list_in6])
+        self.cli_set(['policy', 'prefix-list6', prefix_list_out6])
+
+        self.cli_set(base_path + ['distribute-list', 'ipv4', 'access-list', 'in', access_list_in4])
+        self.cli_set(base_path + ['distribute-list', 'ipv4', 'access-list', 'out', access_list_out4])
+        self.cli_set(base_path + ['distribute-list', 'ipv6', 'access-list', 'in', access_list_in6])
+        self.cli_set(base_path + ['distribute-list', 'ipv6', 'access-list', 'out', access_list_out6])
+
+        self.cli_set(base_path + ['distribute-list', 'ipv4', 'prefix-list', 'in', prefix_list_in4])
+        self.cli_set(base_path + ['distribute-list', 'ipv4', 'prefix-list', 'out', prefix_list_out4])
+        self.cli_set(base_path + ['distribute-list', 'ipv6', 'prefix-list', 'in', prefix_list_in6])
+        self.cli_set(base_path + ['distribute-list', 'ipv6', 'prefix-list', 'out', prefix_list_out6])
+
+        for interface in self._interfaces:
+            self.cli_set(base_path + ['interface', interface])
+
+            self.cli_set(['policy', 'access-list6', f'{access_list_in6}-{interface}'])
+            self.cli_set(['policy', 'access-list6', f'{access_list_out6}-{interface}'])
+
+            self.cli_set(['policy', 'prefix-list', f'{prefix_list_in4}-{interface}'])
+            self.cli_set(['policy', 'prefix-list', f'{prefix_list_out4}-{interface}'])
+            self.cli_set(['policy', 'prefix-list6', f'{prefix_list_in6}-{interface}'])
+            self.cli_set(['policy', 'prefix-list6', f'{prefix_list_out6}-{interface}'])
+
+            tmp_path = base_path + ['distribute-list', 'ipv4', 'interface', interface]
+            self.cli_set(tmp_path + ['access-list', 'in', f'{access_list_in4_iface}'])
+            self.cli_set(tmp_path + ['access-list', 'out', f'{access_list_out4_iface}'])
+            self.cli_set(tmp_path + ['prefix-list', 'in', f'{prefix_list_in4}-{interface}'])
+            self.cli_set(tmp_path + ['prefix-list', 'out', f'{prefix_list_out4}-{interface}'])
+
+            tmp_path = base_path + ['distribute-list', 'ipv6', 'interface', interface]
+            self.cli_set(tmp_path + ['access-list', 'in', f'{access_list_in6}-{interface}'])
+            self.cli_set(tmp_path + ['access-list', 'out', f'{access_list_out6}-{interface}'])
+            self.cli_set(tmp_path + ['prefix-list', 'in', f'{prefix_list_in6}-{interface}'])
+            self.cli_set(tmp_path + ['prefix-list', 'out', f'{prefix_list_out6}-{interface}'])
+
+        self.cli_commit()
+
+        frrconfig = self.getFRRconfig('router babel', daemon=PROCESS_NAME)
+        self.assertIn(f' distribute-list {access_list_in4} in', frrconfig)
+        self.assertIn(f' distribute-list {access_list_out4} out', frrconfig)
+        self.assertIn(f' ipv6 distribute-list {access_list_in6} in', frrconfig)
+        self.assertIn(f' ipv6 distribute-list {access_list_out6} out', frrconfig)
+
+        self.assertIn(f' distribute-list prefix {prefix_list_in4} in', frrconfig)
+        self.assertIn(f' distribute-list prefix {prefix_list_out4} out', frrconfig)
+        self.assertIn(f' ipv6 distribute-list prefix {prefix_list_in6} in', frrconfig)
+        self.assertIn(f' ipv6 distribute-list prefix {prefix_list_out6} out', frrconfig)
+
+        for interface in self._interfaces:
+            self.assertIn(f' distribute-list {access_list_in4_iface} in {interface}', frrconfig)
+            self.assertIn(f' distribute-list {access_list_out4_iface} out {interface}', frrconfig)
+            self.assertIn(f' ipv6 distribute-list {access_list_in6}-{interface} in {interface}', frrconfig)
+            self.assertIn(f' ipv6 distribute-list {access_list_out6}-{interface} out {interface}', frrconfig)
+
+            self.assertIn(f' distribute-list prefix {prefix_list_in4}-{interface} in {interface}', frrconfig)
+            self.assertIn(f' distribute-list prefix {prefix_list_out4}-{interface} out {interface}', frrconfig)
+            self.assertIn(f' ipv6 distribute-list prefix {prefix_list_in6}-{interface} in {interface}', frrconfig)
+            self.assertIn(f' ipv6 distribute-list prefix {prefix_list_out6}-{interface} out {interface}', frrconfig)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

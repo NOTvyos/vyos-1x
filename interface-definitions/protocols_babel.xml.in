@@ -83,12 +83,6 @@
                       <valueless/>
                     </properties>
                   </leafNode>
-                  <leafNode name="eigrp">
-                    <properties>
-                      <help>Redistribute EIGRP routes</help>
-                      <valueless/>
-                    </properties>
-                  </leafNode>
                   <leafNode name="isis">
                     <properties>
                       <help>Redistribute IS-IS routes</help>

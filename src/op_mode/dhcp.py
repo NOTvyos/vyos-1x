@@ -17,6 +17,9 @@
 import os
 import sys
 import typing
+import re
+import struct
+from pypureomapi import Omapi, OmapiMessage, OmapiError, pack_ip, OMAPI_OP_UPDATE
 
 from datetime import datetime
 from glob import glob
@@ -432,6 +435,116 @@ def release_client_lease(raw: bool, family: ArgFamily, interface: str):
         call(f'systemctl stop dhcp6c@{interface}.service')
     else:
         call(f'systemctl stop dhclient@{interface}.service')
+
+
+class CustomOmapi(Omapi):
+    # Custom OMAPI client with extended functionalities to interact with DHCP leases
+    def query_server_insecure(self, message):
+        # Send the message and receive a response for it with insecure flag enabled
+        self.send_message(message)
+        return self.receive_response(message, insecure=True)
+
+    def release_lease(self, ip_address):
+        """Release a DHCP lease using its IP address by setting the lease state to 'released'.
+        Args:
+            ip_address (str): The IP address associated with the lease to be released.
+        Raises:
+            OmapiError: If the lease cannot be released due to server issues or invalid handle.
+        """
+        # Prepare a message to open the lease object by IP address
+        msg = OmapiMessage.open(b'lease')
+        msg.obj.append((b'ip-address', pack_ip(ip_address)))
+
+        # Query server to get the handle for this lease
+        response = self.query_server_insecure(msg)
+        if response.opcode != OMAPI_OP_UPDATE or response.handle == 0:
+            raise OmapiError('Lease lookup failed or invalid handle received.')
+
+        # Update message to set the lease state to "released" (state code 4)
+        release_msg = OmapiMessage.update(response.handle)
+        release_msg.update_object({b'state': struct.pack('!I', 4)})
+
+        # Send release message and verify the result
+        release_response = self.query_server_insecure(release_msg)
+        result = next((v for k, v in release_response.message if k == b'result'), None)
+
+        if result != b'\x00\x00\x00\x00':  # Non-zero indicates failure
+            raise OmapiError(
+                'Failed to release the lease; non-zero result code returned.'
+            )
+
+
+def _extract_omapi_key(conf_path='/run/dhcp-server/dhcpd.conf'):
+    """Extract the OMAPI key from the DHCP configuration file.
+    Args:
+        conf_path (str): Path to the DHCP configuration file (default: "/run/dhcp-server/dhcpd.conf").
+    Returns:
+        str: The extracted OMAPI key.
+    Raises:
+        ValueError: If the configuration file is not found or the key is missing.
+    """
+    try:
+        with open(conf_path, 'r') as conf_file:
+            conf_content = conf_file.read()
+
+        # Regex pattern to match and extract OMAPI key information
+        key_value_pattern = re.compile(
+            r'^key vyos_omapi_key {\n\s+algorithm (?P<omapi_key_algo>[\w-]+);\n\s+secret "(?P<omapi_key>[\w+/=]+)";',
+            re.M | re.S,
+        )
+
+        # Extract the OMAPI key value
+        key_value_match = key_value_pattern.search(conf_content)
+        if key_value_match:
+            key_value = key_value_match.group('omapi_key')
+        else:
+            raise ValueError('Failed to load OMAPI key from dhcpd.conf')
+
+        return key_value
+
+    except FileNotFoundError:
+        raise ValueError(f'Configuration file {conf_path} not found.')
+
+
+def clear_release_lease(ip_address: str) -> None:
+    """Retrieve lease information and release it if it is in an active state.
+    Args:
+        ip_address (str): IP address of the lease to be displayed and released.
+    """
+    server_ip: str = '127.0.0.1'
+    server_port: int = 7911
+
+    # Get OMAPI key from the configuration
+    key_name = 'vyos_omapi_key'
+    key_value = _extract_omapi_key()
+
+    # Initialize the CustomOmapi client
+    omapi_client = CustomOmapi(
+        hostname=server_ip,
+        port=server_port,
+        username=key_name.encode('utf-8'),
+        key=key_value.encode('utf-8'),
+    )
+
+    try:
+        # Retrieve lease information
+        lease_info = omapi_client.lookup_by_lease(ip=ip_address)
+
+        # Allow release only if lease is in an active state (state code 2)
+        if lease_info.get('state') != 2:
+            raise ValueError('Only active leases can be released')
+
+        # Proceed to release the lease
+        omapi_client.release_lease(ip_address)
+        print(f'Lease for {ip_address} successfully released.')
+
+    except OmapiError as e:
+        print(f'Error retrieving or releasing lease: {e}')
+
+    finally:
+        # Ensure client connection is closed
+        omapi_client.close()
+
 
 if __name__ == '__main__':
     try:

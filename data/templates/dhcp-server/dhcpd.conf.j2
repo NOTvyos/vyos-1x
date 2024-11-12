@@ -249,3 +249,11 @@ shared-network {{ network }} {
 
 {%     endfor %}
 {% endif %}
+
+# Enable OMAPI on localhost
+omapi-port 7911;
+key vyos_omapi_key {
+   algorithm HMAC-MD5;
+   secret "{{ omapi_key }}"; # base64-encoded
+};
+omapi-key vyos_omapi_key;

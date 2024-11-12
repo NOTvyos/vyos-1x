@@ -143,6 +143,7 @@ Depends:
   python3-passlib,
   python3-psutil,
   python3-pyhumps,
+  python3-pypureomapi,
   python3-pystache,
   python3-pyudev,
   python3-six,

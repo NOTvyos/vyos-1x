@@ -16,9 +16,11 @@
 
 import os
 
+from base64 import b64encode
 from ipaddress import ip_address
 from ipaddress import ip_network
 from netaddr import IPRange
+from secrets import token_hex
 from sys import exit
 
 from vyos.base import DeprecationWarning
@@ -133,6 +135,9 @@ def get_config(config=None):
     if len(dhcp['high_availability']) == 1:
         ## only default value for mode is set, need to remove ha node
         del dhcp['high_availability']
+
+    # Generate a random OMAPI key
+    dhcp['omapi_key'] = b64encode(token_hex(32).encode('utf-8')).decode('utf-8')
 
     return dhcp
 

@@ -252,6 +252,12 @@
             </properties>
             <command>sudo ${vyos_op_scripts_dir}/dhcp.py release_client_lease --family inet --interface "$4"</command>
           </tagNode>
+          <tagNode name="server">
+            <properties>
+              <help>Release DHCP server lease</help>
+            </properties>
+            <command>sudo ${vyos_op_scripts_dir}/dhcp.py clear_release_lease --ip-address "$4"</command>
+          </tagNode>
         </children>
       </node>
       <node name="dhcpv6">

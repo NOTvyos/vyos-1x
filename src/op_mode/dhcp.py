@@ -79,104 +79,93 @@ def _get_raw_server_leases(family='inet', pool=None, sorted=None, state=[], orig
     lease_file = '/config/dhcpdv6.leases' if family == 'inet6' else '/config/dhcpd.leases'
     data = []
     leases = IscDhcpLeases(lease_file).get(include_backups=True)
-    if pool is None:
-        pool = _get_dhcp_pools(family=family)
-        aux = False
-    else:
-        pool = [pool]
-        aux = True
 
-    ## Search leases for every pool
-    for pool_name in pool:
-        for lease in leases:
-            if lease.sets.get('shared-networkname', '') == pool_name or lease.sets.get('shared-networkname', '') == '':
-            #if lease.sets.get('shared-networkname', '') == pool_name:
-                data_lease = {}
-                data_lease['ip'] = lease.ip
-                data_lease['state'] = lease.binding_state
-                #data_lease['pool'] = pool_name if lease.sets.get('shared-networkname', '') != '' else 'Fail-Over Server'
-                data_lease['pool'] = lease.sets.get('shared-networkname', '')
-                data_lease['end'] = lease.end.timestamp() if lease.end else None
-                data_lease['origin'] = 'local' if data_lease['pool'] != '' else 'remote'
+    # Determine pool(s) to process
+    pool_list = [pool] if pool else _get_dhcp_pools(family=family)
+    aux = pool is not None
 
-                if family == 'inet':
-                    data_lease['mac'] = lease.ethernet
-                    data_lease['start'] = lease.start.timestamp()
-                    data_lease['hostname'] = lease.hostname
+    # Process each lease
+    for lease in leases:
+        lease_pool_name = lease.sets.get('shared-networkname', '')
 
-                if family == 'inet6':
-                    data_lease['last_communication'] = lease.last_communication.timestamp()
-                    data_lease['duid'] = _format_hex_string(lease.duid)
-                    lease_types_long = {'na': 'non-temporary', 'ta': 'temporary', 'pd': 'prefix delegation'}
-                    data_lease['type'] = lease_types_long[lease.type]
+        # Check if lease matches specified pool(s)
+        if lease_pool_name in pool_list or (not aux and lease_pool_name == ''):
+            data_lease = {
+                'ip': lease.ip,
+                'state': lease.binding_state or 'unknown',
+                'pool': lease_pool_name,
+                'end': lease.end.timestamp() if lease.end else None,
+                'origin': 'local' if lease_pool_name else 'remote',
+                'remaining': '-',
+                'start': lease.start.timestamp() if family == 'inet' and lease.start else None,
+                'hostname': lease.hostname if family == 'inet' else None,
+                'mac': lease.ethernet if family == 'inet' else None,
+                'last_communication': lease.last_communication.timestamp() if family == 'inet6' and lease.last_communication else None,
+                'duid': _format_hex_string(lease.duid) if family == 'inet6' else None,
+                'type': None
+            }
 
-                data_lease['remaining'] = '-'
+            # Set lease type for IPv6
+            if family == 'inet6' and lease.type:
+                lease_types_long = {'na': 'non-temporary', 'ta': 'temporary', 'pd': 'prefix delegation'}
+                data_lease['type'] = lease_types_long.get(lease.type, 'unknown')
 
-                if lease.end:
-                    data_lease['remaining'] = lease.end - datetime.utcnow()
+            # Calculate remaining time for the lease
+            if lease.end:
+                remaining_time = lease.end - datetime.utcnow()
+                data_lease['remaining'] = str(remaining_time).split('.')[0] if remaining_time.days >= 0 else '-'
 
-                    if data_lease['remaining'].days >= 0:
-                        # substraction gives us a timedelta object which can't be formatted with strftime
-                        # so we use str(), split gets rid of the microseconds
-                        data_lease['remaining'] = str(data_lease["remaining"]).split('.')[0]
+            # Filter by state, origin, and pool, then add lease to data if valid
+            if (not state or data_lease['state'] in state or state == 'all') and \
+               (not origin or data_lease['origin'] in origin) and \
+               (not aux or data_lease['pool'] == lease_pool_name):
+                data.append(data_lease)
 
-                # Do not add old leases
-                if data_lease['remaining'] != '' and data_lease['state'] != 'free':
-                    if not state or data_lease['state'] in state or state == 'all':
-                        if not origin or data_lease['origin'] in origin:
-                            if not aux or (aux and data_lease['pool'] == pool_name):
-                                data.append(data_lease)
+    # Deduplicate entries based on IP address
+    unique_data = {entry['ip']: entry for entry in data}.values()
 
-                # deduplicate
-                checked = []
-                for entry in data:
-                    addr = entry.get('ip')
-                    if addr not in checked:
-                        checked.append(addr)
-                    else:
-                        idx = _find_list_of_dict_index(data, key='ip', value=addr)
-                        data.pop(idx)
-
+    # Sort data if needed
     if sorted:
         if sorted == 'ip':
-            data.sort(key = lambda x:ip_address(x['ip']))
+            unique_data = sorted(unique_data, key=lambda x: ip_address(x['ip']))
         else:
-            data.sort(key = lambda x:x[sorted])
-    return data
+            unique_data = sorted(unique_data, key=lambda x: x.get(sorted, ''))
+
+    return list(unique_data)
 
 
 def _get_formatted_server_leases(raw_data, family='inet'):
     data_entries = []
     if family == 'inet':
         for lease in raw_data:
-            ipaddr = lease.get('ip')
-            hw_addr = lease.get('mac')
-            state = lease.get('state')
+            ipaddr = lease.get('ip', '-')
+            hw_addr = lease.get('mac', '-')
+            state = lease.get('state', '-')
             start = lease.get('start')
-            start =  _utc_to_local(start).strftime('%Y/%m/%d %H:%M:%S')
+            start = _utc_to_local(start).strftime('%Y/%m/%d %H:%M:%S') if start else '-'
             end = lease.get('end')
-            end =  _utc_to_local(end).strftime('%Y/%m/%d %H:%M:%S') if end else '-'
-            remain = lease.get('remaining')
-            pool = lease.get('pool')
-            hostname = lease.get('hostname')
-            origin = lease.get('origin')
+            end = _utc_to_local(end).strftime('%Y/%m/%d %H:%M:%S') if end else '-'
+            remain = lease.get('remaining', '-')
+            pool = lease.get('pool', '-')
+            hostname = lease.get('hostname', '-')
+            origin = lease.get('origin', '-')
             data_entries.append([ipaddr, hw_addr, state, start, end, remain, pool, hostname, origin])
 
         headers = ['IP Address', 'MAC address', 'State', 'Lease start', 'Lease expiration', 'Remaining', 'Pool',
                    'Hostname', 'Origin']
 
-    if family == 'inet6':
+    elif family == 'inet6':
         for lease in raw_data:
-            ipaddr = lease.get('ip')
-            state = lease.get('state')
+            ipaddr = lease.get('ip', '-')
+            state = lease.get('state', '-')
             start = lease.get('last_communication')
-            start = _utc_to_local(start).strftime('%Y/%m/%d %H:%M:%S')
+            start = _utc_to_local(start).strftime('%Y/%m/%d %H:%M:%S') if start else '-'
             end = lease.get('end')
             end = _utc_to_local(end).strftime('%Y/%m/%d %H:%M:%S') if end else '-'
-            remain = lease.get('remaining')
-            lease_type = lease.get('type')
-            pool = lease.get('pool')
-            host_identifier = lease.get('duid')
+            remain = lease.get('remaining', '-')
+            lease_type = lease.get('type', '-')
+            pool = lease.get('pool', '-')
+            host_identifier = lease.get('duid', '-')
             data_entries.append([ipaddr, state, start, end, remain, lease_type, pool, host_identifier])
 
         headers = ['IPv6 address', 'State', 'Last communication', 'Lease expiration', 'Remaining', 'Type', 'Pool',

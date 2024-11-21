@@ -162,37 +162,6 @@ def get_config(config=None):
     if len(argv) > 1 and argv[1] == 'certbot_renew':
         pki['certbot_renew'] = {}
 
-<<<<<<< HEAD
-    tmp = node_changed(conf, base + ['ca'], recursive=True, expand_nodes=Diff.DELETE | Diff.ADD)
-    if tmp:
-        if 'changed' not in pki: pki.update({'changed':{}})
-        pki['changed'].update({'ca' : tmp})
-
-    tmp = node_changed(conf, base + ['certificate'], recursive=True, expand_nodes=Diff.DELETE | Diff.ADD)
-    if tmp:
-        if 'changed' not in pki: pki.update({'changed':{}})
-        pki['changed'].update({'certificate' : tmp})
-
-    tmp = node_changed(conf, base + ['dh'], recursive=True, expand_nodes=Diff.DELETE | Diff.ADD)
-    if tmp:
-        if 'changed' not in pki: pki.update({'changed':{}})
-        pki['changed'].update({'dh' : tmp})
-
-    tmp = node_changed(conf, base + ['key-pair'], recursive=True, expand_nodes=Diff.DELETE | Diff.ADD)
-    if tmp:
-        if 'changed' not in pki: pki.update({'changed':{}})
-        pki['changed'].update({'key_pair' : tmp})
-
-    tmp = node_changed(conf, base + ['openssh'], recursive=True, expand_nodes=Diff.DELETE | Diff.ADD)
-    if tmp:
-        if 'changed' not in pki: pki.update({'changed':{}})
-        pki['changed'].update({'openssh' : tmp})
-
-    tmp = node_changed(conf, base + ['openvpn', 'shared-secret'], recursive=True, expand_nodes=Diff.DELETE | Diff.ADD)
-    if tmp:
-        if 'changed' not in pki: pki.update({'changed':{}})
-        pki['changed'].update({'openvpn' : tmp})
-=======
 
     # Walk through the list of sync_translate mapping and build a list
     # which is later used to check if the node was changed in the CLI config
@@ -206,7 +175,6 @@ def get_config(config=None):
         if 'changed' not in pki:
             pki.update({'changed':{}})
         pki['changed'].update({key.replace('-', '_') : tmp})
->>>>>>> b433f9d48 (pki: T7122: remove duplicate list definition - can be auto generated)
 
     # We only merge on the defaults of there is a configuration at all
     if conf.exists(base):

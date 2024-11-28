@@ -41,6 +41,18 @@
                       </valueHelp>
                     </properties>
                   </leafNode>
+                  <leafNode name="secret-type">
+                    <properties>
+                      <help>Secret type</help>
+                      <completionHelp>
+                        <list>base64 plaintext</list>
+                      </completionHelp>
+                      <constraint>
+                        <regex>(base64|plaintext)</regex>
+                      </constraint>
+                    </properties>
+                    <defaultValue>plaintext</defaultValue>
+                  </leafNode>
                 </children>
               </tagNode>
             </children>

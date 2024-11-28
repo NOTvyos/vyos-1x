@@ -20,6 +20,7 @@ import unittest
 from base_vyostest_shim import VyOSUnitTestSHIM
 
 from vyos.configsession import ConfigSessionError
+from vyos.utils.convert import encode_to_base64
 from vyos.utils.process import process_named_running
 from vyos.utils.file import read_file
 
@@ -490,6 +491,7 @@ class TestVPNIPsec(VyOSUnitTestSHIM.TestCase):
         local_id = 'vyos-r1'
         remote_id = 'vyos-r2'
         peer_base_path = base_path + ['site-to-site', 'peer', connection_name]
+        secret_base64 = encode_to_base64(secret)
 
         self.cli_set(tunnel_path + ['tun1', 'encapsulation', 'gre'])
         self.cli_set(tunnel_path + ['tun1', 'source-address', local_address])
@@ -504,7 +506,8 @@ class TestVPNIPsec(VyOSUnitTestSHIM.TestCase):
         self.cli_set(base_path + ['authentication', 'psk', connection_name, 'id', remote_id])
         self.cli_set(base_path + ['authentication', 'psk', connection_name, 'id', local_address])
         self.cli_set(base_path + ['authentication', 'psk', connection_name, 'id', peer_ip])
-        self.cli_set(base_path + ['authentication', 'psk', connection_name, 'secret', secret])
+        self.cli_set(base_path + ['authentication', 'psk', connection_name, 'secret', secret_base64])
+        self.cli_set(base_path + ['authentication', 'psk', connection_name, 'secret-type', 'base64'])
 
         self.cli_set(peer_base_path + ['authentication', 'local-id', local_id])
         self.cli_set(peer_base_path + ['authentication', 'mode', 'pre-shared-secret'])
@@ -541,7 +544,7 @@ class TestVPNIPsec(VyOSUnitTestSHIM.TestCase):
             f'id-{regex_uuid4} = "{remote_id}"',
             f'id-{regex_uuid4} = "{peer_ip}"',
             f'id-{regex_uuid4} = "{local_address}"',
-            f'secret = "{secret}"',
+            f'secret = 0s{secret_base64}',
         ]
 
         for line in swanctl_secrets_lines:

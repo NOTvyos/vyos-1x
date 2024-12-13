@@ -776,6 +776,7 @@ class TestFirewall(VyOSUnitTestSHIM.TestCase):
             ['type filter hook output priority filter; policy accept;'],
             ['ct state invalid', 'udp sport 67', 'udp dport 68', 'accept'],
             ['ct state invalid', 'ether type arp', 'accept'],
+            ['ct state invalid', 'ether type 0x8864', 'accept'],
             ['chain VYOS_PREROUTING_filter'],
             ['type filter hook prerouting priority filter; policy accept;'],
             ['ip6 daddr @A6_AGV6', 'notrack'],

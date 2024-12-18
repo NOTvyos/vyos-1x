@@ -230,6 +230,12 @@ Depends:
   squidclient,
   squidguard,
 # End "service webproxy"
+# For "service monitoring prometheus node-exporter"
+  node-exporter,
+# End "service monitoring prometheus node-exporter"
+# For "service monitoring prometheus frr-exporter"
+  frr-exporter,
+# End "service monitoring prometheus frr-exporter"
 # For "service monitoring telegraf"
   telegraf (>= 1.20),
 # End "service monitoring telegraf"

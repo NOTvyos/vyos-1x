@@ -6,10 +6,12 @@
 {{ ip_ipv6 }} route {{ prefix }} reject {{ prefix_config.reject.distance if prefix_config.reject.distance is vyos_defined }} {{ 'tag ' ~ prefix_config.reject.tag if prefix_config.reject.tag is vyos_defined }} {{ 'table ' ~ table if table is vyos_defined }}
 {% endif %}
 {% if prefix_config.dhcp_interface is vyos_defined %}
-{%     set next_hop = prefix_config.dhcp_interface | get_dhcp_router %}
-{%     if next_hop is vyos_defined %}
-{{ ip_ipv6 }} route {{ prefix }} {{ next_hop }} {{ prefix_config.dhcp_interface }} {{ 'table ' ~ table if table is vyos_defined }}
-{%     endif %}
+{%     for dhcp_interface in prefix_config.dhcp_interface %}
+{%         set next_hop = dhcp_interface | get_dhcp_router %}
+{%         if next_hop is vyos_defined %}
+{{ ip_ipv6 }} route {{ prefix }} {{ next_hop }} {{ dhcp_interface }} {{ 'table ' ~ table if table is vyos_defined }}
+{%         endif %}
+{%     endfor %}
 {% endif %}
 {% if prefix_config.interface is vyos_defined %}
 {%     for interface, interface_config in prefix_config.interface.items() if interface_config.disable is not defined %}

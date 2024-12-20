@@ -45,8 +45,9 @@ def get_config(config=None):
     if not conf.exists(base):
         return None
 
-    monitoring = conf.get_config_dict(base, key_mangling=('-', '_'), get_first_key=True)
-    monitoring = conf.merge_defaults(monitoring, recursive=True)
+    monitoring = conf.get_config_dict(
+        base, key_mangling=('-', '_'), get_first_key=True, with_recursive_defaults=True
+    )
 
     tmp = is_node_changed(conf, base + ['node-exporter', 'vrf'])
     if tmp:

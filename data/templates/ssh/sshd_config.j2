@@ -110,3 +110,16 @@ ClientAliveInterval {{ client_keepalive_interval }}
 {% if rekey.data is vyos_defined  %}
 RekeyLimit {{ rekey.data }}M {{ rekey.time + 'M' if rekey.time is vyos_defined }}
 {% endif %}
+<<<<<<< HEAD
+=======
+
+{% if trusted_user_ca_key is vyos_defined %}
+TrustedUserCAKeys /etc/ssh/trusted_user_ca_key
+{% endif %}
+
+{% if trusted_user_ca_key is vyos_defined and trusted_user_ca_key.bind_user is vyos_defined %}
+AuthorizedPrincipalsFile /etc/ssh/authorized_principals/%u
+{% elif trusted_user_ca_key is vyos_defined %}
+AuthorizedPrincipalsFile none
+{% endif %}
+>>>>>>> 6c3b1ef2f (ssh: T6013: support SSH AuthorizedPrincipalsFile in use with trusted-user-ca-key)

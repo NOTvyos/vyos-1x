@@ -1,5 +1,6 @@
 etc/bash_completion.d
 etc/commit
+etc/cron.d
 etc/default
 etc/dhcp
 etc/ipsec.d

@@ -196,30 +196,6 @@
           </node>
         </children>
       </tagNode>
-      <tagNode name="openssh">
-        <properties>
-          <help>OpenSSH public and private keys</help>
-        </properties>
-        <children>
-          <node name="public">
-            <properties>
-              <help>Public key</help>
-            </properties>
-            <children>
-              #include <include/pki/cli-public-key-base64.xml.i>
-            </children>
-          </node>
-          <node name="private">
-            <properties>
-              <help>Private key</help>
-            </properties>
-            <children>
-              #include <include/pki/cli-private-key-base64.xml.i>
-              #include <include/pki/password-protected.xml.i>
-            </children>
-          </node>
-        </children>
-      </tagNode>
       <node name="openvpn">
         <properties>
           <help>OpenVPN keys</help>

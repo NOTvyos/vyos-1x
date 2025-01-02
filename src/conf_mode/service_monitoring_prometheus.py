@@ -26,15 +26,17 @@ from vyos.utils.process import call
 from vyos import ConfigError
 from vyos import airbag
 
-
 airbag.enable()
 
 node_exporter_service_file = '/etc/systemd/system/node_exporter.service'
 node_exporter_systemd_service = 'node_exporter.service'
+node_exporter_collector_path = '/run/node_exporter/collector'
 
 frr_exporter_service_file = '/etc/systemd/system/frr_exporter.service'
 frr_exporter_systemd_service = 'frr_exporter.service'
 
+blackbox_exporter_service_file = '/etc/systemd/system/blackbox_exporter.service'
+blackbox_exporter_systemd_service = 'blackbox_exporter.service'
 
 def get_config(config=None):
     if config:
@@ -57,6 +59,12 @@ def get_config(config=None):
     if tmp:
         monitoring.update({'frr_exporter_restart_required': {}})
 
+    tmp = False
+    for node in ['vrf', 'config-file']:
+        tmp = tmp or is_node_changed(conf, base + ['blackbox-exporter', node])
+    if tmp:
+        monitoring.update({'blackbox_exporter_restart_required': {}})
+
     return monitoring
 
 
@@ -69,6 +77,22 @@ def verify(monitoring):
 
     if 'frr_exporter' in monitoring:
         verify_vrf(monitoring['frr_exporter'])
+
+    if 'blackbox_exporter' in monitoring:
+        verify_vrf(monitoring['blackbox_exporter'])
+
+        if (
+            'modules' in monitoring['blackbox_exporter']
+            and 'dns' in monitoring['blackbox_exporter']['modules']
+            and 'name' in monitoring['blackbox_exporter']['modules']['dns']
+        ):
+            for mod_name, mod_config in monitoring['blackbox_exporter']['modules'][
+                'dns'
+            ]['name'].items():
+                if 'query_name' not in mod_config:
+                    raise ConfigError(
+                        f'query name not specified in dns module {mod_name}'
+                    )
 
     return None
 
@@ -84,6 +108,11 @@ def generate(monitoring):
         if os.path.isfile(frr_exporter_service_file):
             os.unlink(frr_exporter_service_file)
 
+    if not monitoring or 'blackbox_exporter' not in monitoring:
+        # Delete systemd files
+        if os.path.isfile(blackbox_exporter_service_file):
+            os.unlink(blackbox_exporter_service_file)
+
     if not monitoring:
         return None
 
@@ -94,6 +123,13 @@ def generate(monitoring):
             'prometheus/node_exporter.service.j2',
             monitoring['node_exporter'],
         )
+        if (
+            'collectors' in monitoring['node_exporter']
+            and 'textfile' in monitoring['node_exporter']['collectors']
+        ):
+            # Create textcollector folder
+            if not os.path.isdir(node_exporter_collector_path):
+                os.makedirs(node_exporter_collector_path)
 
     if 'frr_exporter' in monitoring:
         # Render frr_exporter service_file
@@ -101,6 +137,20 @@ def generate(monitoring):
             frr_exporter_service_file,
             'prometheus/frr_exporter.service.j2',
             monitoring['frr_exporter'],
+        )
+
+    if 'blackbox_exporter' in monitoring:
+        # Render blackbox_exporter service_file
+        render(
+            blackbox_exporter_service_file,
+            'prometheus/blackbox_exporter.service.j2',
+            monitoring['blackbox_exporter'],
+        )
+        # Render blackbox_exporter config file
+        render(
+            '/run/blackbox_exporter/config.yml',
+            'prometheus/blackbox_exporter.yml.j2',
+            monitoring['blackbox_exporter'],
         )
 
     return None
@@ -113,6 +163,8 @@ def apply(monitoring):
         call(f'systemctl stop {node_exporter_systemd_service}')
     if not monitoring or 'frr_exporter' not in monitoring:
         call(f'systemctl stop {frr_exporter_systemd_service}')
+    if not monitoring or 'blackbox_exporter' not in monitoring:
+        call(f'systemctl stop {blackbox_exporter_systemd_service}')
 
     if not monitoring:
         return
@@ -133,6 +185,13 @@ def apply(monitoring):
 
         call(f'systemctl {systemd_action} {frr_exporter_systemd_service}')
 
+    if 'blackbox_exporter' in monitoring:
+        # we need to restart the service if e.g. the VRF name changed
+        systemd_action = 'reload-or-restart'
+        if 'blackbox_exporter_restart_required' in monitoring:
+            systemd_action = 'restart'
+
+        call(f'systemctl {systemd_action} {blackbox_exporter_systemd_service}')
 
 if __name__ == '__main__':
     try:

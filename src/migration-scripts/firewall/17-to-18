@@ -1,4 +1,4 @@
-# Copyright (C) 2024 VyOS maintainers and contributors
+# Copyright (C) 2024-2025 VyOS maintainers and contributors
 #
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
@@ -14,12 +14,11 @@
 # along with this library.  If not, see <http://www.gnu.org/licenses/>.
 
 # From
-    # set firewall zone <zone> interface <iface>
+#   set firewall zone <zone> interface RED
+#   set firewall zone <zone> interface eth0
 # To
-    # set firewall zone <zone> member interface <iface>
-    # or
-    # set firewall zone <zone> member vrf <vrf>
-
+#   set firewall zone <zone> member vrf RED
+#   set firewall zone <zone> member interface eth0
 
 from vyos.configtree import ConfigTree
 
@@ -31,7 +30,12 @@ def migrate(config: ConfigTree) -> None:
         return
 
     for zone in config.list_nodes(base):
-        if config.exists(base + [zone, 'interface']):
-            for iface in config.return_values(base + [zone, 'interface']):
-                config.set(base + [zone, 'member', 'interface'], value=iface, replace=False)
-            config.delete(base + [zone, 'interface'])
+        zone_iface_base = base + [zone, 'interface']
+        zone_member_base = base + [zone, 'member']
+        if config.exists(zone_iface_base):
+            for iface in config.return_values(zone_iface_base):
+                if config.exists(['vrf', 'name', iface]):
+                    config.set(zone_member_base + ['vrf'], value=iface, replace=False)
+                else:
+                    config.set(zone_member_base + ['interface'], value=iface, replace=False)
+            config.delete(zone_iface_base)

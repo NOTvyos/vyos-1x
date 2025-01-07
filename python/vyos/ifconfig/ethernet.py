@@ -31,7 +31,6 @@ class EthernetIf(Interface):
     """
     Abstraction of a Linux Ethernet Interface
     """
-    iftype = 'ethernet'
     definition = {
         **Interface.definition,
         **{
@@ -114,6 +113,9 @@ class EthernetIf(Interface):
         super().__init__(ifname, **kargs)
         self.ethtool = Ethtool(ifname)
 
+    def _create(self):
+        pass
+
     def remove(self):
         """
         Remove interface from config. Removing the interface deconfigures all
@@ -130,7 +132,11 @@ class EthernetIf(Interface):
             self.set_admin_state('down')
 
         # Remove all VLAN subinterfaces - filter with the VLAN dot
-        for vlan in [x for x in Section.interfaces(self.iftype) if x.startswith(f'{self.ifname}.')]:
+        for vlan in [
+            x
+            for x in Section.interfaces('ethernet')
+            if x.startswith(f'{self.ifname}.')
+        ]:
             Interface(vlan).remove()
 
         super().remove()

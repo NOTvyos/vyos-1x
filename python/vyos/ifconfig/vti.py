@@ -18,7 +18,6 @@ from vyos.utils.dict import dict_search
 
 @Interface.register
 class VTIIf(Interface):
-    iftype = 'vti'
     definition = {
         **Interface.definition,
         **{

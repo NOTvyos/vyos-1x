@@ -1,4 +1,4 @@
-# Copyright 2019-2024 VyOS maintainers and contributors <maintainers@vyos.io>
+# Copyright 2019-2025 VyOS maintainers and contributors <maintainers@vyos.io>
 #
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
@@ -1410,10 +1410,10 @@ class Interface(Control):
             if tmp and 'addr_info' in tmp:
                 for address_dict in tmp['addr_info']:
                     # Only remove dynamic assigned addresses
-                    if 'dynamic' not in address_dict:
-                        continue
-                    address = address_dict['local']
-                    self.del_addr(address)
+                    if address_dict['family'] == 'inet' and 'dynamic' in address_dict:
+                        address = address_dict['local']
+                        prefixlen = address_dict['prefixlen']
+                        self.del_addr(f'{address}/{prefixlen}')
 
             # cleanup old config files
             for file in [dhclient_config_file, systemd_override_file, dhclient_lease_file]:

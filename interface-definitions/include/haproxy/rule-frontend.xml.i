@@ -50,6 +50,9 @@
               #include <include/constraint/alpha-numeric-hyphen-underscore.xml.i>
             </constraint>
             <constraintErrorMessage>Server name must be alphanumeric and can contain hyphen and underscores</constraintErrorMessage>
+            <completionHelp>
+              <path>load-balancing haproxy backend</path>
+            </completionHelp>
           </properties>
         </leafNode>
       </children>

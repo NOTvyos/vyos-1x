@@ -146,7 +146,6 @@ class WireGuardOperational(Operational):
 @Interface.register
 class WireGuardIf(Interface):
     OperationalClass = WireGuardOperational
-    iftype = 'wireguard'
     definition = {
         **Interface.definition,
         **{
@@ -155,6 +154,9 @@ class WireGuardIf(Interface):
             'bridgeable': False,
         }
     }
+
+    def _create(self):
+        super()._create('wireguard')
 
     def get_mac(self):
         """ Get a synthetic MAC address. """

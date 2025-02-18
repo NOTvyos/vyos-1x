@@ -26,24 +26,42 @@ from vyos.utils.process import cmd
 
 base_path = ['qos']
 
-def get_tc_qdisc_json(interface) -> dict:
+
+def get_tc_qdisc_json(interface, all=False) -> dict:
     tmp = cmd(f'tc -detail -json qdisc show dev {interface}')
     tmp = loads(tmp)
+
+    if all:
+        return tmp
+
     return next(iter(tmp))
 
-def get_tc_filter_json(interface, direction) -> list:
-    if direction not in ['ingress', 'egress']:
+
+def get_tc_filter_json(interface, direction=None) -> list:
+    if direction not in ['ingress', 'egress', None]:
         raise ValueError()
-    tmp = cmd(f'tc -detail -json filter show dev {interface} {direction}')
+
+    cmd_stmt = f'tc -detail -json filter show dev {interface}'
+    if direction:
+        cmd_stmt += f' {direction}'
+
+    tmp = cmd(cmd_stmt)
     tmp = loads(tmp)
     return tmp
 
-def get_tc_filter_details(interface, direction) -> list:
+
+def get_tc_filter_details(interface, direction=None) -> list:
     # json doesn't contain all params, such as mtu
-    if direction not in ['ingress', 'egress']:
+    if direction not in ['ingress', 'egress', None]:
         raise ValueError()
-    tmp = cmd(f'tc -details filter show dev {interface} {direction}')
+
+    cmd_stmt = f'tc -details filter show dev {interface}'
+    if direction:
+        cmd_stmt += f' {direction}'
+
+    tmp = cmd(cmd_stmt)
     return tmp
+
 
 class TestQoS(VyOSUnitTestSHIM.TestCase):
     @classmethod
@@ -853,6 +871,81 @@ class TestQoS(VyOSUnitTestSHIM.TestCase):
         # inherit from non exist group, should commit success with warning
         self.cli_set(['qos', 'traffic-match-group', '3', 'match-group', 'unexpected'])
         self.cli_commit()
+
+    def test_18_priority_queue_default(self):
+        interface = self._interfaces[0]
+        policy_name = f'qos-policy-{interface}'
+
+        self.cli_set(base_path + ['interface', interface, 'egress', policy_name])
+        self.cli_set(
+            base_path
+            + ['policy', 'priority-queue', policy_name, 'description', 'default policy']
+        )
+
+        self.cli_commit()
+
+        tmp = get_tc_qdisc_json(interface, all=True)
+
+        self.assertEqual(2, len(tmp))
+        self.assertEqual('prio', tmp[0]['kind'])
+        self.assertDictEqual(
+            {
+                'bands': 2,
+                'priomap': [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                'multiqueue': False,
+            },
+            tmp[0]['options'],
+        )
+        self.assertEqual('pfifo', tmp[1]['kind'])
+        self.assertDictEqual({'limit': 1000}, tmp[1]['options'])
+
+    def test_19_priority_queue_default_random_detect(self):
+        interface = self._interfaces[0]
+        policy_name = f'qos-policy-{interface}'
+
+        self.cli_set(base_path + ['interface', interface, 'egress', policy_name])
+        self.cli_set(
+            base_path
+            + [
+                'policy',
+                'priority-queue',
+                policy_name,
+                'default',
+                'queue-type',
+                'random-detect',
+            ]
+        )
+
+        self.cli_commit()
+
+        tmp = get_tc_qdisc_json(interface, all=True)
+
+        self.assertEqual(2, len(tmp))
+        self.assertEqual('prio', tmp[0]['kind'])
+        self.assertDictEqual(
+            {
+                'bands': 2,
+                'priomap': [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                'multiqueue': False,
+            },
+            tmp[0]['options'],
+        )
+        self.assertEqual('red', tmp[1]['kind'])
+        self.assertDictEqual(
+            {
+                'limit': 73728,
+                'min': 9216,
+                'max': 18432,
+                'ecn': False,
+                'harddrop': False,
+                'adaptive': False,
+                'nodrop': False,
+                'ewma': 3,
+                'probability': 0.1,
+                'Scell_log': 13,
+            },
+            tmp[1]['options'],
+        )
 
 
 if __name__ == '__main__':

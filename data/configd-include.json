@@ -22,7 +22,7 @@
 "interfaces_wireguard.py",
 "interfaces_wireless.py",
 "interfaces_wwan.py",
-"load-balancing_reverse-proxy.py",
+"load-balancing_haproxy.py",
 "load-balancing_wan.py",
 "nat.py",
 "nat64.py",

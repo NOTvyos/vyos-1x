@@ -31,7 +31,6 @@ set interfaces pppoe pppoe7 ipv6 adjust-mss '1432'
 set interfaces pppoe pppoe7 mtu '1492'
 set interfaces pppoe pppoe7 no-peer-dns
 set interfaces pppoe pppoe7 source-interface 'eth1'
-set service lldp interface eth1 disable
 set service ntp allow-client address '192.168.189.0/24'
 set service ntp server time1.vyos.net
 set service ntp server time2.vyos.net
@@ -83,3 +82,5 @@ set nat source rule 50 translation port '10300'
 set nat source rule 100 outbound-interface name 'pppoe7'
 set nat source rule 100 source address '192.168.189.0/24'
 set nat source rule 100 translation address 'masquerade'
+set service lldp interface all
+set service lldp interface eth1 mode 'disable'

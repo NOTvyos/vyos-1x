@@ -1,12 +1,12 @@
-<!-- include start from firewall/bridge-hook-forward.xml.i -->
-<node name="forward">
+<!-- include start from firewall/bridge-hook-prerouting.xml.i -->
+<node name="prerouting">
   <properties>
-    <help>Bridge forward firewall</help>
+    <help>Bridge prerouting firewall</help>
   </properties>
   <children>
     <node name="filter">
       <properties>
-        <help>Bridge firewall forward filter</help>
+        <help>Bridge firewall prerouting filter</help>
       </properties>
       <children>
         #include <include/firewall/default-action-base-chains.xml.i>
@@ -14,7 +14,7 @@
         #include <include/generic-description.xml.i>
         <tagNode name="rule">
           <properties>
-            <help>Bridge Firewall forward filter rule number</help>
+            <help>Bridge firewall prerouting filter rule number</help>
             <valueHelp>
               <format>u32:1-999999</format>
               <description>Number for this firewall rule</description>
@@ -26,14 +26,9 @@
           </properties>
           <children>
             #include <include/firewall/common-rule-bridge.xml.i>
-            #include <include/firewall/action-l2.xml.i>
-            #include <include/firewall/connection-mark.xml.i>
-            #include <include/firewall/connection-status.xml.i>
-            #include <include/firewall/state.xml.i>
+            #include <include/firewall/action-and-notrack.xml.i>
             #include <include/firewall/inbound-interface.xml.i>
-            #include <include/firewall/outbound-interface.xml.i>
             #include <include/firewall/set-packet-modifications-dscp.xml.i>
-            #include <include/firewall/set-packet-modifications-conn-mark.xml.i>
             #include <include/firewall/set-packet-modifications-mark.xml.i>
             #include <include/firewall/set-packet-modifications-tcp-mss.xml.i>
             #include <include/firewall/set-packet-modifications-ttl.xml.i>

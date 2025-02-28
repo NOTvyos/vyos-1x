@@ -26,7 +26,13 @@
           </properties>
           <children>
             #include <include/firewall/common-rule-ipv6.xml.i>
+            #include <include/firewall/match-ipsec-out.xml.i>
             #include <include/firewall/outbound-interface.xml.i>
+            #include <include/firewall/set-packet-modifications-dscp.xml.i>
+            #include <include/firewall/set-packet-modifications-conn-mark.xml.i>
+            #include <include/firewall/set-packet-modifications-mark.xml.i>
+            #include <include/firewall/set-packet-modifications-tcp-mss.xml.i>
+            #include <include/firewall/set-packet-modifications-hop-limit.xml.i>
           </children>
         </tagNode>
       </children>
@@ -53,7 +59,13 @@
           </properties>
           <children>
             #include <include/firewall/common-rule-ipv6-raw.xml.i>
+            #include <include/firewall/match-ipsec-out.xml.i>
             #include <include/firewall/outbound-interface.xml.i>
+            #include <include/firewall/set-packet-modifications-dscp.xml.i>
+            #include <include/firewall/set-packet-modifications-conn-mark.xml.i>
+            #include <include/firewall/set-packet-modifications-mark.xml.i>
+            #include <include/firewall/set-packet-modifications-tcp-mss.xml.i>
+            #include <include/firewall/set-packet-modifications-hop-limit.xml.i>
           </children>
         </tagNode>
       </children>

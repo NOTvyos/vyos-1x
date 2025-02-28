@@ -19,6 +19,9 @@ from sys import exit
 from vyos.config import Config
 from vyos.configdict import get_interface_dict
 from vyos.configdict import is_node_changed
+from vyos.configdict import is_source_interface
+from vyos.configdep import set_dependents
+from vyos.configdep import call_dependents
 from vyos.configverify import verify_vrf
 from vyos.configverify import verify_address
 from vyos.configverify import verify_bridge_delete
@@ -29,8 +32,10 @@ from vyos.ifconfig import WireGuardIf
 from vyos.utils.kernel import check_kmod
 from vyos.utils.network import check_port_availability
 from vyos.utils.network import is_wireguard_key_pair
+from vyos.utils.process import call
 from vyos import ConfigError
 from vyos import airbag
+from pathlib import Path
 airbag.enable()
 
 
@@ -54,11 +59,31 @@ def get_config(config=None):
     if is_node_changed(conf, base + [ifname, 'peer']):
         wireguard.update({'rebuild_required': {}})
 
+    wireguard['peers_need_resolve'] = []
+    if 'peer' in wireguard:
+        for peer, peer_config in wireguard['peer'].items():
+            if 'disable' not in peer_config and 'host_name' in peer_config:
+                wireguard['peers_need_resolve'].append(peer)
+
+    # Check if interface is used as source-interface on VXLAN interface
+    tmp = is_source_interface(conf, ifname, 'vxlan')
+    if tmp:
+        if 'deleted' not in wireguard:
+            set_dependents('vxlan', conf, tmp)
+        else:
+            wireguard['is_source_interface'] = tmp
+
     return wireguard
+
 
 def verify(wireguard):
     if 'deleted' in wireguard:
         verify_bridge_delete(wireguard)
+        if 'is_source_interface' in wireguard:
+            raise ConfigError(
+                f'Interface "{wireguard["ifname"]}" cannot be deleted as it is used '
+                f'as source interface for "{wireguard["is_source_interface"]}"!'
+            )
         return None
 
     verify_mtu_ipv6(wireguard)
@@ -70,9 +95,6 @@ def verify(wireguard):
     if 'private_key' not in wireguard:
         raise ConfigError('Wireguard private-key not defined')
 
-    if 'peer' not in wireguard:
-        raise ConfigError('At least one Wireguard peer is required!')
-
     if 'port' in wireguard and 'port_changed' in wireguard:
         listen_port = int(wireguard['port'])
         if check_port_availability('0.0.0.0', listen_port, 'udp') is not True:
@@ -80,31 +102,45 @@ def verify(wireguard):
                                'cannot be used for the interface!')
 
     # run checks on individual configured WireGuard peer
-    public_keys = []
-    for tmp in wireguard['peer']:
-        peer = wireguard['peer'][tmp]
+    if 'peer' in wireguard:
+        public_keys = []
+        for tmp in wireguard['peer']:
+            peer = wireguard['peer'][tmp]
 
-        if 'allowed_ips' not in peer:
-            raise ConfigError(f'Wireguard allowed-ips required for peer "{tmp}"!')
+            base_error = f'WireGuard peer "{tmp}":'
 
-        if 'public_key' not in peer:
-            raise ConfigError(f'Wireguard public-key required for peer "{tmp}"!')
+            if 'host_name' in peer and 'address' in peer:
+                raise ConfigError(f'{base_error} address/host-name are mutually exclusive!')
 
-        if ('address' in peer and 'port' not in peer) or ('port' in peer and 'address' not in peer):
-            raise ConfigError('Both Wireguard port and address must be defined '
-                              f'for peer "{tmp}" if either one of them is set!')
+            if 'allowed_ips' not in peer:
+                raise ConfigError(f'{base_error} missing mandatory allowed-ips!')
 
-        if peer['public_key'] in public_keys:
-            raise ConfigError(f'Duplicate public-key defined on peer "{tmp}"')
+            if 'public_key' not in peer:
+                raise ConfigError(f'{base_error} missing mandatory public-key!')
 
-        if 'disable' not in peer:
-            if is_wireguard_key_pair(wireguard['private_key'], peer['public_key']):
-                raise ConfigError(f'Peer "{tmp}" has the same public key as the interface "{wireguard["ifname"]}"')
+            if peer['public_key'] in public_keys:
+                raise ConfigError(f'{base_error} duplicate public-key!')
 
-        public_keys.append(peer['public_key'])
+            if 'disable' not in peer:
+                if is_wireguard_key_pair(wireguard['private_key'], peer['public_key']):
+                    tmp = wireguard["ifname"]
+                    raise ConfigError(f'{base_error} identical public key as interface "{tmp}"!')
+
+            port_addr_error = f'{base_error} both port and address/host-name must '\
+                              'be defined if either one of them is set!'
+            if 'port' not in peer:
+                if 'host_name' in peer or 'address' in peer:
+                    raise ConfigError(port_addr_error)
+            else:
+                if 'host_name' not in peer and 'address' not in peer:
+                    raise ConfigError(port_addr_error)
+
+            public_keys.append(peer['public_key'])
+
 
 def generate(wireguard):
     return None
+
 
 def apply(wireguard):
     check_kmod('wireguard')
@@ -124,7 +160,27 @@ def apply(wireguard):
         wg = WireGuardIf(**wireguard)
         wg.update(wireguard)
 
+    domain_resolver_usage = '/run/use-vyos-domain-resolver-interfaces-wireguard-' + wireguard['ifname']
+
+    ## DOMAIN RESOLVER
+    domain_action = 'restart'
+    if 'peers_need_resolve' in wireguard and len(wireguard['peers_need_resolve']) > 0 and 'disable' not in wireguard:
+        from vyos.utils.file import write_file
+
+        text = f'# Automatically generated by interfaces_wireguard.py\nThis file indicates that vyos-domain-resolver service is used by the interfaces_wireguard.\n'
+        text += "intefaces:\n" + "".join([f"  - {peer}\n" for peer in wireguard['peers_need_resolve']])
+        Path(domain_resolver_usage).write_text(text)
+        write_file(domain_resolver_usage, text)
+    else:
+        Path(domain_resolver_usage).unlink(missing_ok=True)
+        if not Path('/run').glob('use-vyos-domain-resolver*'):
+            domain_action = 'stop'
+    call(f'systemctl {domain_action} vyos-domain-resolver.service')
+
+    call_dependents()
+
     return None
+
 
 if __name__ == '__main__':
     try:

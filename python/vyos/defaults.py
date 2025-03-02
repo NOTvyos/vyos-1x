@@ -1,4 +1,4 @@
-# Copyright 2018-2024 VyOS maintainers and contributors <maintainers@vyos.io>
+# Copyright 2018-2025 VyOS maintainers and contributors <maintainers@vyos.io>
 #
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
@@ -36,6 +36,11 @@ directories = {
   'isc_dhclient_dir' : '/run/dhclient',
   'dhcp6_client_dir' : '/run/dhcp6c',
   'vyos_configdir' : '/opt/vyatta/config'
+}
+
+systemd_services = {
+    'rsyslog' : 'rsyslog.service',
+    'snmpd' : 'snmpd.service',
 }
 
 config_status = '/tmp/vyos-config-status'

@@ -25,9 +25,9 @@ op_xml_obj = $(op_xml_src:.xml.in=.xml)
 libvyosconfig:
 	if ! [ -f $(LIBVYOSCONFIG_BUILD_PATH) ]; then
 		rm -rf /tmp/libvyosconfig && \
-			git clone https://github.com/vyos/libvyosconfig.git /tmp/libvyosconfig || exit 1
+			git clone https://github.com/VyOS-Networks/libvyosconfig /tmp/libvyosconfig || exit 1
 		cd /tmp/libvyosconfig && \
-			git checkout c6141d97c85b2902d45b12ec81d8e4a48da03519 || exit 1
+			git checkout e0b78736903d06b08de3533a840784eaccedbfb3 || exit 1
 		./build.sh
 	fi
 

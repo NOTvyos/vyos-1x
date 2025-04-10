@@ -776,6 +776,7 @@ class TestFirewall(VyOSUnitTestSHIM.TestCase):
             ['type filter hook output priority filter; policy accept;'],
             ['ct state invalid', 'udp sport 67', 'udp dport 68', 'accept'],
             ['ct state invalid', 'ether type arp', 'accept'],
+            ['ct state invalid', 'ether type 0x8864', 'accept'],
             ['chain VYOS_PREROUTING_filter'],
             ['type filter hook prerouting priority filter; policy accept;'],
             ['ip6 daddr @A6_AGV6', 'notrack'],
@@ -1177,7 +1178,7 @@ class TestFirewall(VyOSUnitTestSHIM.TestCase):
         self.cli_set(['firewall', 'ipv4', 'forward', 'filter', 'rule', '1', 'jump-target', 'smoketest-ipsec-in4'])
         self.cli_set(['firewall', 'ipv4', 'prerouting', 'raw', 'rule', '1', 'action', 'jump'])
         self.cli_set(['firewall', 'ipv4', 'prerouting', 'raw', 'rule', '1', 'jump-target', 'smoketest-ipsec-in4'])
-        
+
         self.cli_set(['firewall', 'ipv4', 'output', 'filter', 'rule', '1', 'action', 'jump'])
         self.cli_set(['firewall', 'ipv4', 'output', 'filter', 'rule', '1', 'jump-target', 'smoketest-ipsec-out4'])
         self.cli_set(['firewall', 'ipv4', 'forward', 'filter', 'rule', '1', 'action', 'jump'])
@@ -1212,8 +1213,8 @@ class TestFirewall(VyOSUnitTestSHIM.TestCase):
         self.cli_set(['firewall', 'ipv4', 'name', 'smoketest-cycle-3', 'rule', '1', 'action', 'jump'])
         self.cli_set(['firewall', 'ipv4', 'name', 'smoketest-cycle-3', 'rule', '1', 'jump-target', 'smoketest-cycle-1'])
 
-        # nft will fail to load cyclic jumps in any form, whether the rule is reachable or not. 
-        # It should be caught by conf validation. 
+        # nft will fail to load cyclic jumps in any form, whether the rule is reachable or not.
+        # It should be caught by conf validation.
         with self.assertRaises(ConfigSessionError):
             self.cli_commit()
 
@@ -1271,6 +1272,40 @@ class TestFirewall(VyOSUnitTestSHIM.TestCase):
 
         with self.assertRaises(ConfigSessionError):
             self.cli_commit()
+
+    def test_ipv4_remote_group(self):
+        # Setup base config for test
+        self.cli_set(['firewall', 'group', 'remote-group', 'group01', 'url', 'http://127.0.0.1:80/list.txt'])
+        self.cli_set(['firewall', 'group', 'remote-group', 'group01', 'description', 'Example Group 01'])
+        self.cli_set(['firewall', 'ipv4', 'input', 'filter', 'rule', '10', 'action', 'drop'])
+        self.cli_set(['firewall', 'ipv4', 'input', 'filter', 'rule', '10', 'protocol', 'tcp'])
+        self.cli_set(['firewall', 'ipv4', 'input', 'filter', 'rule', '10', 'destination', 'group', 'remote-group', 'group01'])
+
+        self.cli_commit()
+
+        # Test remote-group had been loaded correctly in nft
+        nftables_search = [
+            ['R_group01'],
+            ['type ipv4_addr'],
+            ['flags interval'],
+            ['meta l4proto', 'daddr @R_group01', "ipv4-INP-filter-10"]
+        ]
+        self.verify_nftables(nftables_search, 'ip vyos_filter')
+
+        # Test remote-group cannot be configured without a URL
+        self.cli_delete(['firewall', 'group', 'remote-group', 'group01', 'url'])
+
+        with self.assertRaises(ConfigSessionError):
+            self.cli_commit()
+        self.cli_discard()
+
+        # Test remote-group cannot be set alongside address in rules
+        self.cli_set(['firewall', 'ipv4', 'input', 'filter', 'rule', '10', 'destination', 'address', '127.0.0.1'])
+
+        with self.assertRaises(ConfigSessionError):
+            self.cli_commit()
+        self.cli_discard()
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -40,7 +40,7 @@ directories = {
 }
 
 systemd_services = {
-    'rsyslog' : 'rsyslog.service',
+    'syslog' : 'syslog.service',
     'snmpd' : 'snmpd.service',
 }
 

@@ -899,7 +899,7 @@ class Interface(Control):
         rc = self.set_interface('ipv6_autoconf', autoconf)
         if autoconf == '0':
             flushed = self.flush_ipv6_slaac_addrs()
-            self.flush_ipv6_slaac_routes(flushed)
+            self.flush_ipv6_slaac_routes(ra_addrs=flushed)
         return rc
 
     def add_ipv6_eui64_address(self, prefix):
@@ -1312,7 +1312,7 @@ class Interface(Control):
         netns = get_interface_namespace(self.ifname)
         netns_cmd = f'ip netns exec {netns}' if netns else ''
         tmp = get_interface_address(self.ifname)
-        if 'addr_info' not in tmp:
+        if not tmp or 'addr_info' not in tmp:
             return
 
         # Parse interface IP addresses. Example data:
@@ -1340,13 +1340,9 @@ class Interface(Control):
 
         Will raise an exception on error.
         """
-        # Do not flush default route if interface uses DHCPv6 in addition to SLAAC
-        if 'address' in self.config and 'dhcpv6' in self.config['address']:
-            return None
-
         # Find IPv6 connected prefixes for flushed SLAAC addresses
         connected = []
-        for addr in ra_addrs:
+        for addr in ra_addrs if isinstance(ra_addrs, list) else []:
             connected.append(str(IPv6Interface(addr).network))
 
         netns = get_interface_namespace(self.ifname)
@@ -1851,9 +1847,7 @@ class Interface(Control):
 
         # IPv6 router advertisements
         tmp = dict_search('ipv6.address.autoconf', config)
-        value = '2' if (tmp != None) else '1'
-        if 'dhcpv6' in new_addr:
-            value = '2'
+        value = '2' if (tmp != None) else '0'
         self.set_ipv6_accept_ra(value)
 
         # IPv6 address autoconfiguration

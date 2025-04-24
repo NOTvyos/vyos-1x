@@ -35,11 +35,12 @@ directories = {
   'vyos_udev_dir' : '/run/udev/vyos',
   'isc_dhclient_dir' : '/run/dhclient',
   'dhcp6_client_dir' : '/run/dhcp6c',
-  'vyos_configdir' : '/opt/vyatta/config'
+  'vyos_configdir' : '/opt/vyatta/config',
+  'ppp_nexthop_dir' : '/run/ppp_nexthop'
 }
 
 systemd_services = {
-    'rsyslog' : 'rsyslog.service',
+    'syslog' : 'syslog.service',
     'snmpd' : 'snmpd.service',
 }
 
@@ -58,8 +59,8 @@ config_default = os.path.join(directories['data'], 'config.boot.default')
 
 rt_symbolic_names = {
   # Standard routing tables for Linux & reserved IDs for VyOS
-  'default': 253, # Confusingly, a final fallthru, not the default. 
-  'main': 254,    # The actual global table used by iproute2 unless told otherwise. 
+  'default': 253, # Confusingly, a final fallthru, not the default.
+  'main': 254,    # The actual global table used by iproute2 unless told otherwise.
   'local': 255,   # Special kernel loopback table.
 }
 

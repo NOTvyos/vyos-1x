@@ -1,3 +1,4 @@
 [Unit]
 Description=VyOS target
-After=multi-user.target vyos-grub-update.service
+After=multi-user.target vyos-grub-update.service systemd-sysctl.service
+

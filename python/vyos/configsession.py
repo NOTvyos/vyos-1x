@@ -39,6 +39,13 @@ INSTALL_IMAGE = [
     '--no-prompt',
     '--image-path',
 ]
+IMPORT_PKI = ['/opt/vyatta/bin/vyatta-op-cmd-wrapper', 'import']
+IMPORT_PKI_NO_PROMPT = [
+    '/usr/libexec/vyos/op_mode/pki.py',
+    '--action',
+    'import',
+    '--no-prompt',
+]
 REMOVE_IMAGE = [
     '/usr/libexec/vyos/op_mode/image_manager.py',
     '--action',
@@ -60,6 +67,16 @@ REBOOT = ['/opt/vyatta/bin/vyatta-op-cmd-wrapper', 'reboot']
 POWEROFF = ['/opt/vyatta/bin/vyatta-op-cmd-wrapper', 'poweroff']
 OP_CMD_ADD = ['/opt/vyatta/bin/vyatta-op-cmd-wrapper', 'add']
 OP_CMD_DELETE = ['/opt/vyatta/bin/vyatta-op-cmd-wrapper', 'delete']
+TRACEROUTE = [
+    '/usr/libexec/vyos/op_mode/mtr_execute.py',
+    'mtr',
+    '--for-api',
+    '--report-mode',
+    '--report-cycles',
+    '1',
+    '--json',
+    '--host',
+]
 
 # Default "commit via" string
 APP = 'vyos-http-api'
@@ -286,6 +303,14 @@ class ConfigSession(object):
         out = self.__run_command(REMOVE_IMAGE + [name])
         return out
 
+    def import_pki(self, path):
+        out = self.__run_command(IMPORT_PKI + path)
+        return out
+
+    def import_pki_no_prompt(self, path):
+        out = self.__run_command(IMPORT_PKI_NO_PROMPT + path)
+        return out
+
     def set_default_image(self, name):
         out = self.__run_command(SET_DEFAULT_IMAGE + [name])
         return out
@@ -320,4 +345,8 @@ class ConfigSession(object):
 
     def show_container_image(self):
         out = self.__run_command(SHOW + ['container', 'image'])
+        return out
+
+    def traceroute(self, host):
+        out = self.__run_command(TRACEROUTE + [host])
         return out

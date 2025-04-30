@@ -35,7 +35,6 @@ from errno import ENOSPC
 from psutil import disk_partitions
 
 from vyos.configtree import ConfigTree
-from vyos.configquery import ConfigTreeQuery
 from vyos.remote import download
 from vyos.system import disk
 from vyos.system import grub
@@ -49,8 +48,8 @@ from vyos.utils.dict import dict_search
 from vyos.utils.io import ask_input, ask_yes_no, select_entry
 from vyos.utils.file import chmod_2775
 from vyos.utils.file import read_file
-from vyos.utils.process import cmd, run
-from vyos.version import get_remote_version, get_version_data
+from vyos.utils.process import cmd, run, rc_cmd
+from vyos.version import get_version_data
 
 # define text messages
 MSG_ERR_NOT_LIVE: str = 'The system is already installed. Please use "add system image" instead.'
@@ -96,6 +95,7 @@ MSG_WARN_ROOT_SIZE_TOOBIG: str = 'The size is too big. Try again.'
 MSG_WARN_ROOT_SIZE_TOOSMALL: str = 'The size is too small. Try again'
 MSG_WARN_IMAGE_NAME_WRONG: str = 'The suggested name is unsupported!\n'\
 'It must be between 1 and 64 characters long and contains only the next characters: .+-_ a-z A-Z 0-9'
+
 MSG_WARN_PASSWORD_CONFIRM: str = 'The entered values did not match. Try again'
 'Installing a different image flavor may cause functionality degradation or break your system.\n' \
 'Do you want to continue with installation?'
@@ -115,6 +115,7 @@ FILE_ROOTFS_SRC: str = '/usr/lib/live/mount/medium/live/filesystem.squashfs'
 ISO_DOWNLOAD_PATH: str = ''
 
 external_download_script = '/usr/libexec/vyos/simple-download.py'
+external_latest_image_url_script = '/usr/libexec/vyos/latest-image-url.py'
 
 # default boot variables
 DEFAULT_BOOT_VARS: dict[str, str] = {
@@ -556,21 +557,18 @@ def validate_signature(file_path: str, sign_type: str) -> None:
         print('Signature is valid')
 
 def download_file(local_file: str, remote_path: str, vrf: str,
-                  username: str, password: str,
                   progressbar: bool = False, check_space: bool = False):
-    environ['REMOTE_USERNAME'] = username
-    environ['REMOTE_PASSWORD'] = password
+    # Server credentials are implicitly passed in environment variables
+    # that are set by add_image
     if vrf is None:
         download(local_file, remote_path, progressbar=progressbar,
                  check_space=check_space, raise_error=True)
     else:
-        vrf_cmd = f'REMOTE_USERNAME={username} REMOTE_PASSWORD={password} \
-                ip vrf exec {vrf} {external_download_script} \
-                --local-file {local_file} --remote-path {remote_path}'
-        cmd(vrf_cmd)
+        vrf_cmd = f'ip vrf exec {vrf} {external_download_script} \
+                    --local-file {local_file} --remote-path {remote_path}'
+        cmd(vrf_cmd, env=environ)
 
 def image_fetch(image_path: str, vrf: str = None,
-                username: str = '', password: str = '',
                 no_prompt: bool = False) -> Path:
     """Fetch an ISO image
 
@@ -587,11 +585,14 @@ def image_fetch(image_path: str, vrf: str = None,
 
     # Latest version gets url from configured "system update-check url"
     if image_path == 'latest':
-        config = ConfigTreeQuery()
-        if config.exists('system update-check url'):
-            configured_url_version = config.value('system update-check url')
-            remote_url_list = get_remote_version(configured_url_version)
-            image_path = remote_url_list[0].get('url')
+        command = external_latest_image_url_script
+        if vrf:
+            command = f'ip vrf exec {vrf} {command}'
+        code, output = rc_cmd(command, env=environ)
+        if code:
+            print(output)
+            exit(MSG_INFO_INSTALL_EXIT)
+        image_path = output if output else image_path
 
     try:
         # check a type of path
@@ -599,7 +600,6 @@ def image_fetch(image_path: str, vrf: str = None,
             # Download the image file
             ISO_DOWNLOAD_PATH = os.path.join(os.path.expanduser("~"), '{0}.iso'.format(uuid4()))
             download_file(ISO_DOWNLOAD_PATH, image_path, vrf,
-                          username, password,
                           progressbar=True, check_space=True)
 
             # Download the image signature
@@ -610,8 +610,7 @@ def image_fetch(image_path: str, vrf: str = None,
             for sign_type in ['minisig']:
                 try:
                     download_file(f'{ISO_DOWNLOAD_PATH}.{sign_type}',
-                                  f'{image_path}.{sign_type}', vrf,
-                                  username, password)
+                                  f'{image_path}.{sign_type}', vrf)
                     sign_file = (True, sign_type)
                     break
                 except Exception:
@@ -956,8 +955,11 @@ def add_image(image_path: str, vrf: str = None, username: str = '',
     if image.is_live_boot():
         exit(MSG_ERR_LIVE)
 
+    environ['REMOTE_USERNAME'] = username
+    environ['REMOTE_PASSWORD'] = password
+
     # fetch an image
-    iso_path: Path = image_fetch(image_path, vrf, username, password, no_prompt)
+    iso_path: Path = image_fetch(image_path, vrf, no_prompt)
     try:
         # mount an ISO
         Path(DIR_ISO_MOUNT).mkdir(mode=0o755, parents=True)

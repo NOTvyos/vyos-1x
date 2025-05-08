@@ -36,12 +36,18 @@ directories = {
   'isc_dhclient_dir' : '/run/dhclient',
   'dhcp6_client_dir' : '/run/dhcp6c',
   'vyos_configdir' : '/opt/vyatta/config',
+  'ca_certificates' : '/usr/local/share/ca-certificates/vyos',
   'ppp_nexthop_dir' : '/run/ppp_nexthop'
 }
 
 systemd_services = {
+    'haproxy' : 'haproxy.service',
     'syslog' : 'syslog.service',
     'snmpd' : 'snmpd.service',
+}
+
+internal_ports = {
+    'certbot_haproxy' : 65080, # Certbot running behing haproxy
 }
 
 config_status = '/tmp/vyos-config-status'

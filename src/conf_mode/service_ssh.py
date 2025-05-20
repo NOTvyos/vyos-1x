@@ -27,6 +27,15 @@ from vyos.utils.process import call
 from vyos.template import render
 from vyos import ConfigError
 from vyos import airbag
+<<<<<<< HEAD
+=======
+from vyos.pki import find_chain
+from vyos.pki import encode_certificate
+from vyos.pki import load_certificate
+from vyos.utils.dict import dict_search_recursive
+from vyos.utils.file import write_file
+
+>>>>>>> 81dfb64eb (ssh: T6013: move principal name to "system login user <name> authentication")
 airbag.enable()
 
 config_file = r'/run/sshd/sshd_config'
@@ -41,78 +50,6 @@ key_ed25519 = '/etc/ssh/ssh_host_ed25519_key'
 <<<<<<< HEAD
 =======
 trusted_user_ca_key = '/etc/ssh/trusted_user_ca_key'
-authorized_principals = '/etc/ssh/authorized_principals'
-
-
-def cleanup_authorized_principals_dir(valid_users: list[str]):
-    if not os.path.isdir(authorized_principals):
-        return
-
-    # Check the files (user name) under the directory and delete unnecessary ones.
-    for filename in os.listdir(authorized_principals):
-        file_path = os.path.join(authorized_principals, filename)
-        if os.path.isfile(file_path) and filename not in valid_users:
-            os.remove(file_path)
-
-    # If the directory is empty, delete it too
-    if not os.listdir(authorized_principals):
-        os.rmdir(authorized_principals)
-
-
-def handle_trusted_user_ca_key(ssh: dict):
-    if 'trusted_user_ca_key' not in ssh:
-        if os.path.exists(trusted_user_ca_key):
-            os.unlink(trusted_user_ca_key)
-
-        # remove authorized_principals directory if it exists
-        cleanup_authorized_principals_dir([])
-        return
-
-    # trusted_user_ca_key is present
-    ca_key_name = ssh['trusted_user_ca_key']['ca_certificate']
-    pki_ca_cert = ssh['pki']['ca'][ca_key_name]
-
-    loaded_ca_cert = load_certificate(pki_ca_cert['certificate'])
-    loaded_ca_certs = {
-        load_certificate(c['certificate'])
-        for c in ssh['pki']['ca'].values()
-        if 'certificate' in c
-    }
-
-    ca_full_chain = find_chain(loaded_ca_cert, loaded_ca_certs)
-    write_file(
-        trusted_user_ca_key, '\n'.join(encode_certificate(c) for c in ca_full_chain)
-    )
-
-    if 'bind-user' not in ssh['trusted_user_ca_key']:
-        # remove authorized_principals directory if it exists
-        cleanup_authorized_principals_dir([])
-        return
-
-    # bind-user is present
-    configured_users = []
-    for bind_user, bind_user_config in ssh['trusted_user_ca_key']['bind-user'].items():
-        if bind_user not in ssh['login_users']:
-            raise ConfigError(f"User '{bind_user}' not found in system login users")
-
-        if 'principal' not in bind_user_config:
-            raise ConfigError(f"Principal not found for user '{bind_user}'")
-
-        principals = bind_user_config['principal']
-        if isinstance(principals, str):
-            principals = [principals]
-
-        if not os.path.isdir(authorized_principals):
-            os.makedirs(authorized_principals, exist_ok=True)
-
-        principal_file = os.path.join(authorized_principals, bind_user)
-        contents = '\n'.join(principals) + '\n'
-        write_file(principal_file, contents)
-        configured_users.append(bind_user)
-
-    # remove unnecessary files under authorized_principals directory
-    cleanup_authorized_principals_dir(configured_users)
-
 
 >>>>>>> 6c3b1ef2f (ssh: T6013: support SSH AuthorizedPrincipalsFile in use with trusted-user-ca-key)
 def get_config(config=None):
@@ -123,7 +60,10 @@ def get_config(config=None):
     base = ['service', 'ssh']
     if not conf.exists(base):
         return None
+    ssh = conf.get_config_dict(base, key_mangling=('-', '_'),
+                               get_first_key=True, with_pki=True)
 
+<<<<<<< HEAD
 <<<<<<< HEAD
     ssh = conf.get_config_dict(base, key_mangling=('-', '_'), get_first_key=True)
 =======
@@ -140,6 +80,8 @@ def get_config(config=None):
 >>>>>>> 6c3b1ef2f (ssh: T6013: support SSH AuthorizedPrincipalsFile in use with trusted-user-ca-key)
 
     # create a list of all users, cli and users
+=======
+>>>>>>> 81dfb64eb (ssh: T6013: move principal name to "system login user <name> authentication")
     tmp = is_node_changed(conf, base + ['vrf'])
     if tmp: ssh.update({'restart_required': {}})
 
@@ -147,16 +89,26 @@ def get_config(config=None):
     # options which we need to update into the dictionary retrived.
     ssh = conf.merge_defaults(ssh, recursive=True)
 
-    # pass config file path - used in override template
-    ssh['config_file'] = config_file
-
-    # use for trusted ca
-    ssh['login_users'] = login_users
-
     # Ignore default XML values if config doesn't exists
     # Delete key from dict
     if not conf.exists(base + ['dynamic-protection']):
          del ssh['dynamic_protection']
+
+    # See if any user has specified a list of principal names that are accepted
+    # for certificate authentication.
+    tmp = conf.get_config_dict(['system', 'login', 'user'],
+                                key_mangling=('-', '_'),
+                                no_tag_node_value_mangle=True,
+                                get_first_key=True)
+
+    for value, _ in dict_search_recursive(tmp, 'principal'):
+        # Only enable principal handling if SSH trusted-user-ca-key is set
+        if 'trusted_user_ca_key' in ssh:
+            ssh['trusted_user_ca_key'].update({'has_principals': {}})
+        # We do only need to execute this code path once as we need to know
+        # if any one of the local users has a principal set or not - this
+        # accounts for the entire system.
+        break
 
     return ssh
 
@@ -165,7 +117,22 @@ def verify(ssh):
         return None
 
     if 'rekey' in ssh and 'data' not in ssh['rekey']:
+<<<<<<< HEAD
         raise ConfigError(f'Rekey data is required!')
+=======
+        raise ConfigError('Rekey data is required!')
+
+    if 'trusted_user_ca_key' in ssh:
+        if 'ca_certificate' not in ssh['trusted_user_ca_key']:
+            raise ConfigError('CA certificate is mandatory when using ' \
+                              'trusted-user-ca-key')
+
+        ca_key_name = ssh['trusted_user_ca_key']['ca_certificate']
+        verify_pki_ca_certificate(ssh, ca_key_name)
+        pki_ca_cert = ssh['pki']['ca'][ca_key_name]
+        if 'certificate' not in pki_ca_cert or not pki_ca_cert['certificate']:
+            raise ConfigError(f"CA certificate '{ca_key_name}' is not valid or missing")
+>>>>>>> 81dfb64eb (ssh: T6013: move principal name to "system login user <name> authentication")
 
     verify_vrf(ssh)
     return None
@@ -190,8 +157,28 @@ def generate(ssh):
         call(f'ssh-keygen -q -N "" -t ed25519 -f {key_ed25519}')
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
     handle_trusted_user_ca_key(ssh)
+=======
+    if 'trusted_user_ca_key' in ssh:
+        ca_key_name = ssh['trusted_user_ca_key']['ca_certificate']
+        pki_ca_cert = ssh['pki']['ca'][ca_key_name]
+
+        loaded_ca_cert = load_certificate(pki_ca_cert['certificate'])
+        loaded_ca_certs = {
+            load_certificate(c['certificate'])
+            for c in ssh['pki']['ca'].values()
+            if 'certificate' in c
+        }
+
+        ca_full_chain = find_chain(loaded_ca_cert, loaded_ca_certs)
+        write_file(trusted_user_ca_key,
+                   '\n'.join(encode_certificate(c) for c in ca_full_chain))
+    else:
+        if os.path.exists(trusted_user_ca_key):
+            os.unlink(trusted_user_ca_key)
+>>>>>>> 81dfb64eb (ssh: T6013: move principal name to "system login user <name> authentication")
 
 >>>>>>> 6c3b1ef2f (ssh: T6013: support SSH AuthorizedPrincipalsFile in use with trusted-user-ca-key)
     render(config_file, 'ssh/sshd_config.j2', ssh)

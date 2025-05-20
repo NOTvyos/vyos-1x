@@ -283,25 +283,6 @@
             </properties>
             <children>
               #include <include/pki/ca-certificate.xml.i>
-              <tagNode name="bind-user">
-                <properties>
-                  <help>user-name</help>
-                  <constraint>
-                    #include <include/constraint/login-username.xml.i>
-                  </constraint>
-                </properties>
-                <children>
-                  <leafNode name="principal">
-                    <properties>
-                      <help>principal-name</help>
-                      <constraint>
-                        #include <include/constraint/login-username.xml.i>
-                      </constraint>
-                      <multi/>
-                    </properties>
-                  </leafNode>
-                </children>
-              </tagNode>
             </children>
           </node>
 >>>>>>> 6c3b1ef2f (ssh: T6013: support SSH AuthorizedPrincipalsFile in use with trusted-user-ca-key)

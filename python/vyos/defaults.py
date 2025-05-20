@@ -50,6 +50,10 @@ internal_ports = {
     'certbot_haproxy' : 65080, # Certbot running behing haproxy
 }
 
+config_files = {
+    'sshd_user_ca' : '/run/sshd/trusted_user_ca',
+}
+
 config_status = '/tmp/vyos-config-status'
 api_config_state = '/run/http-api-state'
 

@@ -23,19 +23,17 @@ from syslog import LOG_INFO
 from vyos.config import Config
 from vyos.configdict import is_node_changed
 from vyos.configverify import verify_vrf
+from vyos.configverify import verify_pki_openssh_key
+from vyos.defaults import config_files
 from vyos.utils.process import call
 from vyos.template import render
 from vyos import ConfigError
 from vyos import airbag
-<<<<<<< HEAD
-=======
-from vyos.pki import find_chain
-from vyos.pki import encode_certificate
-from vyos.pki import load_certificate
+from vyos.pki import encode_public_key
+from vyos.pki import load_openssh_public_key
 from vyos.utils.dict import dict_search_recursive
 from vyos.utils.file import write_file
 
->>>>>>> 81dfb64eb (ssh: T6013: move principal name to "system login user <name> authentication")
 airbag.enable()
 
 config_file = r'/run/sshd/sshd_config'
@@ -47,11 +45,8 @@ key_rsa = '/etc/ssh/ssh_host_rsa_key'
 key_dsa = '/etc/ssh/ssh_host_dsa_key'
 key_ed25519 = '/etc/ssh/ssh_host_ed25519_key'
 
-<<<<<<< HEAD
-=======
-trusted_user_ca_key = '/etc/ssh/trusted_user_ca_key'
+trusted_user_ca = config_files['sshd_user_ca']
 
->>>>>>> 6c3b1ef2f (ssh: T6013: support SSH AuthorizedPrincipalsFile in use with trusted-user-ca-key)
 def get_config(config=None):
     if config:
         conf = config
@@ -63,27 +58,9 @@ def get_config(config=None):
     ssh = conf.get_config_dict(base, key_mangling=('-', '_'),
                                get_first_key=True, with_pki=True)
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-    ssh = conf.get_config_dict(base, key_mangling=('-', '_'), get_first_key=True)
-=======
-    ssh = conf.get_config_dict(
-        base, key_mangling=('-', '_'), get_first_key=True, with_pki=True
-    )
-    login_users_base = ['system', 'login', 'user']
-    login_users = conf.get_config_dict(
-        login_users_base,
-        key_mangling=('-', '_'),
-        no_tag_node_value_mangle=True,
-        get_first_key=True,
-    )
->>>>>>> 6c3b1ef2f (ssh: T6013: support SSH AuthorizedPrincipalsFile in use with trusted-user-ca-key)
-
-    # create a list of all users, cli and users
-=======
->>>>>>> 81dfb64eb (ssh: T6013: move principal name to "system login user <name> authentication")
     tmp = is_node_changed(conf, base + ['vrf'])
-    if tmp: ssh.update({'restart_required': {}})
+    if tmp:
+        ssh.update({'restart_required': {}})
 
     # We have gathered the dict representation of the CLI, but there are default
     # options which we need to update into the dictionary retrived.
@@ -92,7 +69,7 @@ def get_config(config=None):
     # Ignore default XML values if config doesn't exists
     # Delete key from dict
     if not conf.exists(base + ['dynamic-protection']):
-         del ssh['dynamic_protection']
+        del ssh['dynamic_protection']
 
     # See if any user has specified a list of principal names that are accepted
     # for certificate authentication.
@@ -102,9 +79,9 @@ def get_config(config=None):
                                 get_first_key=True)
 
     for value, _ in dict_search_recursive(tmp, 'principal'):
-        # Only enable principal handling if SSH trusted-user-ca-key is set
-        if 'trusted_user_ca_key' in ssh:
-            ssh['trusted_user_ca_key'].update({'has_principals': {}})
+        # Only enable principal handling if SSH trusted-user-ca is set
+        if 'trusted_user_ca' in ssh:
+            ssh['has_principals'] = {}
         # We do only need to execute this code path once as we need to know
         # if any one of the local users has a principal set or not - this
         # accounts for the entire system.
@@ -112,30 +89,20 @@ def get_config(config=None):
 
     return ssh
 
+
 def verify(ssh):
     if not ssh:
         return None
 
     if 'rekey' in ssh and 'data' not in ssh['rekey']:
-<<<<<<< HEAD
-        raise ConfigError(f'Rekey data is required!')
-=======
         raise ConfigError('Rekey data is required!')
 
-    if 'trusted_user_ca_key' in ssh:
-        if 'ca_certificate' not in ssh['trusted_user_ca_key']:
-            raise ConfigError('CA certificate is mandatory when using ' \
-                              'trusted-user-ca-key')
-
-        ca_key_name = ssh['trusted_user_ca_key']['ca_certificate']
-        verify_pki_ca_certificate(ssh, ca_key_name)
-        pki_ca_cert = ssh['pki']['ca'][ca_key_name]
-        if 'certificate' not in pki_ca_cert or not pki_ca_cert['certificate']:
-            raise ConfigError(f"CA certificate '{ca_key_name}' is not valid or missing")
->>>>>>> 81dfb64eb (ssh: T6013: move principal name to "system login user <name> authentication")
+    if 'trusted_user_ca' in ssh:
+        verify_pki_openssh_key(ssh, ssh['trusted_user_ca'])
 
     verify_vrf(ssh)
     return None
+
 
 def generate(ssh):
     if not ssh:
@@ -156,31 +123,18 @@ def generate(ssh):
         syslog(LOG_INFO, 'SSH ed25519 host key not found, generating new key!')
         call(f'ssh-keygen -q -N "" -t ed25519 -f {key_ed25519}')
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
-    handle_trusted_user_ca_key(ssh)
-=======
-    if 'trusted_user_ca_key' in ssh:
-        ca_key_name = ssh['trusted_user_ca_key']['ca_certificate']
-        pki_ca_cert = ssh['pki']['ca'][ca_key_name]
-
-        loaded_ca_cert = load_certificate(pki_ca_cert['certificate'])
-        loaded_ca_certs = {
-            load_certificate(c['certificate'])
-            for c in ssh['pki']['ca'].values()
-            if 'certificate' in c
-        }
-
-        ca_full_chain = find_chain(loaded_ca_cert, loaded_ca_certs)
-        write_file(trusted_user_ca_key,
-                   '\n'.join(encode_certificate(c) for c in ca_full_chain))
+    if 'trusted_user_ca' in ssh:
+        key_name = ssh['trusted_user_ca']
+        openssh_cert = ssh['pki']['openssh'][key_name]
+        loaded_ca_cert = load_openssh_public_key(openssh_cert['public']['key'],
+                                                 openssh_cert['public']['type'])
+        tmp = encode_public_key(loaded_ca_cert, encoding='OpenSSH',
+                                key_format='OpenSSH')
+        write_file(trusted_user_ca, tmp, trailing_newline=True)
     else:
-        if os.path.exists(trusted_user_ca_key):
-            os.unlink(trusted_user_ca_key)
->>>>>>> 81dfb64eb (ssh: T6013: move principal name to "system login user <name> authentication")
+        if os.path.exists(trusted_user_ca):
+            os.unlink(trusted_user_ca)
 
->>>>>>> 6c3b1ef2f (ssh: T6013: support SSH AuthorizedPrincipalsFile in use with trusted-user-ca-key)
     render(config_file, 'ssh/sshd_config.j2', ssh)
 
     if 'dynamic_protection' in ssh:
@@ -189,12 +143,12 @@ def generate(ssh):
 
     return None
 
+
 def apply(ssh):
-    systemd_service_ssh = 'ssh.service'
     systemd_service_sshguard = 'sshguard.service'
     if not ssh:
         # SSH access is removed in the commit
-        call(f'systemctl stop ssh@*.service')
+        call('systemctl stop ssh@*.service')
         call(f'systemctl stop {systemd_service_sshguard}')
         return None
 
@@ -208,12 +162,13 @@ def apply(ssh):
     if 'restart_required' in ssh:
         # this is only true if something for the VRFs changed, thus we
         # stop all VRF services and only restart then new ones
-        call(f'systemctl stop ssh@*.service')
+        call('systemctl stop ssh@*.service')
         systemd_action = 'restart'
 
     for vrf in ssh['vrf']:
         call(f'systemctl {systemd_action} ssh@{vrf}.service')
     return None
+
 
 if __name__ == '__main__':
     try:

@@ -21,12 +21,15 @@ import subprocess
 from vyos.defaults import directories
 from vyos.utils.process import is_systemd_service_running
 from vyos.utils.dict import dict_to_paths
+from vyos.defaults import DEFAULT_COMMIT_CONFIRM_MINUTES
 
 CLI_SHELL_API = '/bin/cli-shell-api'
 SET = '/opt/vyatta/sbin/my_set'
 DELETE = '/opt/vyatta/sbin/my_delete'
 COMMENT = '/opt/vyatta/sbin/my_comment'
 COMMIT = '/opt/vyatta/sbin/my_commit'
+COMMIT_CONFIRM = ['/usr/bin/config-mgmt', 'commit_confirm', '-y']
+CONFIRM = ['/usr/bin/config-mgmt', 'confirm']
 DISCARD = '/opt/vyatta/sbin/my_discard'
 SHOW_CONFIG = ['/bin/cli-shell-api', 'showConfig']
 LOAD_CONFIG = ['/bin/cli-shell-api', 'loadFile']
@@ -267,6 +270,14 @@ class ConfigSession(object):
         out = self.__run_command([COMMIT])
         return out
 
+    def commit_confirm(self, minutes: int = DEFAULT_COMMIT_CONFIRM_MINUTES):
+        out = self.__run_command(COMMIT_CONFIRM + [f'-t {minutes}'])
+        return out
+
+    def confirm(self):
+        out = self.__run_command(CONFIRM)
+        return out
+
     def discard(self):
         self.__run_command([DISCARD])
 
@@ -294,11 +305,7 @@ class ConfigSession(object):
         return out
 
     def merge_config(self, file_path):
-        if self._vyconf_session is None:
-            out = self.__run_command(MERGE_CONFIG + [file_path])
-        else:
-            out, _ = 'unimplemented'
-
+        out = self.__run_command(MERGE_CONFIG + [file_path])
         return out
 
     def save_config(self, file_path):

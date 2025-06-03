@@ -275,6 +275,18 @@
               </constraint>
             </properties>
           </leafNode>
+          <leafNode name="trusted-user-ca">
+            <properties>
+              <help>OpenSSH trusted user CA</help>
+              <completionHelp>
+                <path>pki openssh</path>
+              </completionHelp>
+              <valueHelp>
+                <format>txt</format>
+                <description>OpenSSH certificate name from PKI subsystem</description>
+              </valueHelp>
+            </properties>
+          </leafNode>
           #include <include/vrf-multi.xml.i>
         </children>
       </node>

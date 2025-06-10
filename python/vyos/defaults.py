@@ -76,3 +76,5 @@ rt_symbolic_names = {
 
 rt_global_vrf = rt_symbolic_names['main']
 rt_global_table = rt_symbolic_names['main']
+
+DEFAULT_COMMIT_CONFIRM_MINUTES = 10

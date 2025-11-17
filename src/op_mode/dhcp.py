@@ -83,12 +83,12 @@ ArgOrigin = typing.Literal['local', 'remote']
 
 
 def _get_raw_server_leases(
-    config, family='inet', pool=None, sorted=None, state=[], origin=None
+    config, family='inet', vrf='', pool=None, sorted=None, state=[], origin=None
 ) -> list:
     inet_suffix = '6' if family == 'inet6' else '4'
     pools = [pool] if pool else kea_get_dhcp_pools(config, inet_suffix)
 
-    mappings = kea_get_server_leases(config, inet_suffix, pools, state, origin)
+    mappings = kea_get_server_leases(config, inet_suffix, vrf, pools, state, origin)
 
     if sorted:
         if sorted == 'ip':
@@ -134,6 +134,7 @@ def _get_formatted_server_leases(raw_data, family='inet'):
     if family == 'inet6':
         for lease in raw_data:
             ipaddr = lease.get('ip')
+            hw_addr = lease.get('mac')
             state = lease.get('state')
             start = datetime.fromtimestamp(
                 lease.get('last_communication'), timezone.utc
@@ -146,19 +147,22 @@ def _get_formatted_server_leases(raw_data, family='inet'):
             remain = lease.get('remaining')
             lease_type = lease.get('type')
             pool = lease.get('pool')
+            hostname = lease.get('hostname')
             host_identifier = lease.get('duid')
             data_entries.append(
-                [ipaddr, state, start, end, remain, lease_type, pool, host_identifier]
+                [ipaddr, hw_addr, state, start, end, remain, pool, hostname, lease_type, host_identifier]
             )
 
         headers = [
             'IPv6 address',
+            'MAC address',
             'State',
             'Last communication',
             'Lease expiration',
             'Remaining',
-            'Type',
             'Pool',
+            'Hostname',
+            'Type',
             'DUID',
         ]
 
@@ -166,9 +170,13 @@ def _get_formatted_server_leases(raw_data, family='inet'):
     return output
 
 
-def _get_pool_size(pool, family='inet'):
+def _get_pool_size(pool, family='inet', vrf=''):
     v = 'v6' if family == 'inet6' else ''
-    base = f'service dhcp{v}-server shared-network-name {pool}'
+    # if vrf is set get the correct base for config
+    if vrf:
+        base = f'vrf name {vrf} service dhcp{v}-server shared-network-name {pool}'
+    else:
+        base = f'service dhcp{v}-server shared-network-name {pool}'
     size = 0
     subnets = config.list_nodes(f'{base} subnet')
     for subnet in subnets:
@@ -185,14 +193,14 @@ def _get_pool_size(pool, family='inet'):
     return size
 
 
-def _get_raw_server_pool_statistics(config, family='inet', pool=None):
+def _get_raw_server_pool_statistics(config, family='inet', vrf='', pool=None):
     inet_suffix = '6' if family == 'inet6' else '4'
     pools = [pool] if pool else kea_get_dhcp_pools(config, inet_suffix)
 
     stats = []
     for p in pools:
-        size = _get_pool_size(family=family, pool=p)
-        leases = len(_get_raw_server_leases(config, family=family, pool=p))
+        size = _get_pool_size(family=family, vrf=vrf, pool=p)
+        leases = len(_get_raw_server_leases(config, family=family, vrf=vrf, pool=p))
         use_percentage = round(leases / size * 100) if size != 0 else 0
         pool_stats = {
             'pool': p,
@@ -269,11 +277,20 @@ def _verify_server(func):
     def _wrapper(*args, **kwargs):
         config = ConfigTreeQuery()
         family = kwargs.get('family')
+        vrf = kwargs.get('vrf')
         v = 'v6' if family == 'inet6' else ''
-        unconf_message = f'DHCP{v} server is not configured'
+
         # Check if config does not exist
-        if not config.exists(f'service dhcp{v}-server'):
-            raise vyos.opmode.UnconfiguredSubsystem(unconf_message)
+        if vrf:
+            unconf_message = f'DHCP{v} server is not configured for VRF {vrf}'
+            if not config.exists(f'vrf name {vrf} service dhcp{v}-server'):
+                raise vyos.opmode.UnconfiguredSubsystem(unconf_message)
+        else:
+            unconf_message = f'DHCP{v} server is not configured'
+            if not config.exists(f'service dhcp{v}-server'):
+                raise vyos.opmode.UnconfiguredSubsystem(unconf_message)
+
+        # return
         return func(*args, **kwargs)
 
     return _wrapper
@@ -303,25 +320,42 @@ def _verify_client(func):
 
 @_verify_server
 def show_server_pool_statistics(
-    raw: bool, family: ArgFamily, pool: typing.Optional[str]
+    raw: bool, family: ArgFamily, vrf: typing.Optional[str], pool: typing.Optional[str]
 ):
     v = 'v6' if family == 'inet6' else ''
     inet_suffix = '6' if family == 'inet6' else '4'
 
-    if not is_systemd_service_running(f'kea-dhcp{inet_suffix}-server.service'):
+    if vrf:
+        service = f'isc-kea-dhcp{inet_suffix}-server@{vrf}.service'
+    else:
+        service = f'isc-kea-dhcp{inet_suffix}-server.service'
+
+    if not is_systemd_service_running(service):
         Warning(stale_warn_msg)
 
     try:
-        active_config = kea_get_active_config(inet_suffix)
+        active_config = kea_get_active_config(inet_suffix, vrf)
     except Exception:
-        raise vyos.opmode.DataUnavailable('Cannot fetch DHCP server configuration')
+        if vrf:
+            raise vyos.opmode.DataUnavailable(
+                f'Cannot fetch DHCP server configuration for VRF {vrf}'
+            )
+        else:
+            raise vyos.opmode.DataUnavailable('Cannot fetch DHCP server configuration')
 
     active_pools = kea_get_dhcp_pools(active_config, inet_suffix)
 
     if pool and active_pools and pool not in active_pools:
-        raise vyos.opmode.IncorrectValue(f'DHCP{v} pool "{pool}" does not exist!')
+        if vrf:
+            raise vyos.opmode.IncorrectValue(
+                f'DHCP{v} pool "{pool}" does not exist for VRF {vrf}!'
+            )
+        else:
+            raise vyos.opmode.IncorrectValue(f'DHCP{v} pool "{pool}" does not exist!')
 
-    pool_data = _get_raw_server_pool_statistics(active_config, family=family, pool=pool)
+    pool_data = _get_raw_server_pool_statistics(
+        active_config, family=family, vrf=vrf, pool=pool
+    )
     if raw:
         return pool_data
     else:
@@ -332,6 +366,7 @@ def show_server_pool_statistics(
 def show_server_leases(
     raw: bool,
     family: ArgFamily,
+    vrf: typing.Optional[str],
     pool: typing.Optional[str],
     sorted: typing.Optional[str],
     state: typing.Optional[ArgState],
@@ -340,18 +375,33 @@ def show_server_leases(
     v = 'v6' if family == 'inet6' else ''
     inet_suffix = '6' if family == 'inet6' else '4'
 
-    if not is_systemd_service_running(f'kea-dhcp{inet_suffix}-server.service'):
+    if vrf:
+        service = f'isc-kea-dhcp{inet_suffix}-server@{vrf}.service'
+    else:
+        service = f'isc-kea-dhcp{inet_suffix}-server.service'
+
+    if not is_systemd_service_running(service):
         Warning(stale_warn_msg)
 
     try:
-        active_config = kea_get_active_config(inet_suffix)
+        active_config = kea_get_active_config(inet_suffix, vrf)
     except Exception:
-        raise vyos.opmode.DataUnavailable('Cannot fetch DHCP server configuration')
+        if vrf:
+            raise vyos.opmode.DataUnavailable(
+                f'Cannot fetch DHCP server configuration for VRF {vrf}'
+            )
+        else:
+            raise vyos.opmode.DataUnavailable('Cannot fetch DHCP server configuration')
 
     active_pools = kea_get_dhcp_pools(active_config, inet_suffix)
 
     if pool and active_pools and pool not in active_pools:
-        raise vyos.opmode.IncorrectValue(f'DHCP{v} pool "{pool}" does not exist!')
+        if vrf:
+            raise vyos.opmode.IncorrectValue(
+                f'DHCP{v} pool "{pool}" does not exist for VRF {vrf}!'
+            )
+        else:
+            raise vyos.opmode.IncorrectValue(f'DHCP{v} pool "{pool}" does not exist!')
 
     sort_valid = sort_valid_inet6 if family == 'inet6' else sort_valid_inet
     if sorted and sorted not in sort_valid:
@@ -363,6 +413,7 @@ def show_server_leases(
     lease_data = _get_raw_server_leases(
         config=active_config,
         family=family,
+        vrf=vrf,
         pool=pool,
         sorted=sorted,
         state=state,
@@ -378,24 +429,40 @@ def show_server_leases(
 def show_server_static_mappings(
     raw: bool,
     family: ArgFamily,
+    vrf: typing.Optional[str],
     pool: typing.Optional[str],
     sorted: typing.Optional[str],
 ):
     v = 'v6' if family == 'inet6' else ''
     inet_suffix = '6' if family == 'inet6' else '4'
 
-    if not is_systemd_service_running(f'kea-dhcp{inet_suffix}-server.service'):
+    if vrf:
+        service = f'isc-kea-dhcp{inet_suffix}-server@{vrf}.service'
+    else:
+        service = f'isc-kea-dhcp{inet_suffix}-server.service'
+
+    if not is_systemd_service_running(service):
         Warning(stale_warn_msg)
 
     try:
-        active_config = kea_get_active_config(inet_suffix)
+        active_config = kea_get_active_config(inet_suffix, vrf)
     except Exception:
-        raise vyos.opmode.DataUnavailable('Cannot fetch DHCP server configuration')
+        if vrf:
+            raise vyos.opmode.DataUnavailable(
+                f'Cannot fetch DHCP server configuration for VRF {vrf}'
+            )
+        else:
+            raise vyos.opmode.DataUnavailable('Cannot fetch DHCP server configuration')
 
     active_pools = kea_get_dhcp_pools(active_config, inet_suffix)
 
     if pool and active_pools and pool not in active_pools:
-        raise vyos.opmode.IncorrectValue(f'DHCP{v} pool "{pool}" does not exist!')
+        if vrf:
+            raise vyos.opmode.IncorrectValue(
+                f'DHCP{v} pool "{pool}" does not exist for VRF {vrf}!'
+            )
+        else:
+            raise vyos.opmode.IncorrectValue(f'DHCP{v} pool "{pool}" does not exist!')
 
     if sorted and sorted not in mapping_sort_valid:
         raise vyos.opmode.IncorrectValue(f'DHCP{v} sort "{sorted}" is invalid!')
@@ -409,21 +476,21 @@ def show_server_static_mappings(
         return _get_formatted_server_static_mappings(static_mappings)
 
 
-def _lease_valid(inet, address):
-    leases = kea_get_leases(inet)
+def _lease_valid(inet, vrf, address):
+    leases = kea_get_leases(inet, vrf)
     return any(lease['ip-address'] == address for lease in leases)
 
 
 @_verify_server
-def clear_dhcp_server_lease(family: ArgFamily, address: str):
+def clear_dhcp_server_lease(family: ArgFamily, address: str, vrf: typing.Optional[str]):
     v = 'v6' if family == 'inet6' else ''
     inet = '6' if family == 'inet6' else '4'
 
-    if not _lease_valid(inet, address):
+    if not _lease_valid(inet, vrf, address):
         print(f'Lease not found on DHCP{v} server')
         return None
 
-    if not kea_delete_lease(inet, address):
+    if not kea_delete_lease(inet, vrf, address):
         print(f'Failed to clear lease for "{address}"')
         return None
 
@@ -509,7 +576,7 @@ def _get_formatted_client_leases(lease_data):
         if 'new_dhcp_server_identifier' in lease:
             data_entries.append(['DHCP Server', lease['new_dhcp_server_identifier']])
         if 'new_dhcp_lease_time' in lease:
-            data_entries.append(['DHCP Server', lease['new_dhcp_lease_time']])
+            data_entries.append(['Lease Time', lease['new_dhcp_lease_time']])
         if 'vrf' in lease:
             data_entries.append(['VRF', lease['vrf']])
         if 'last_update' in lease:

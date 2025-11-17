@@ -14,13 +14,52 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import typing
 import json
+import shutil
 import sys
 import subprocess
 
+from pathlib import Path
+from vyos.defaults import directories
 from vyos.utils.process import cmd
 from vyos.utils.process import rc_cmd
+from vyos.utils.process import run
 import vyos.opmode
+
+def clean_layer(name: str) -> int:
+    def layer_id_from_containers(name: str) -> str | None:
+        if containers.is_file():
+            try:
+                index = json.loads(containers.read_text())
+            except Exception:
+                return None
+            for item in index:
+                if name in item.get("names", []):
+                    return item.get("layer")
+        return None
+
+    def purge_layer_by_id(layer_id: str):
+        layer_dir = overlay_root / layer_id
+
+        # Remove the overlay ID directory
+        shutil.rmtree(layer_dir, ignore_errors=True)
+    storage_dir = Path(directories['podman_storage'])
+    overlay_root = storage_dir / "overlay"
+    containers = storage_dir / "overlay-containers/containers.json"
+    unit = f"vyos-container-{name}.service"
+    layer_id = layer_id_from_containers(name)
+    if not layer_id:
+        # No mapping found; nothing to do
+        return 2
+
+    purge_layer_by_id(layer_id)
+
+    # Reinitiate the container's overlay layer
+    cmd(f"rm -f /run/{unit}.cid /run/{unit}.pid")
+    cmd(f"systemctl reset-failed {unit}")
+    result = run(f"systemctl start {unit}")
+    return result
 
 def _get_json_data(command: str) -> list:
     """
@@ -56,13 +95,14 @@ def add_image(name: str):
                     if rc != 0: raise vyos.opmode.InternalError(out)
 
     rc, output = rc_cmd(f'podman image pull {name}')
+    print(output)
     if rc != 0:
         raise vyos.opmode.InternalError(output)
 
     if do_logout:
         rc_cmd('podman logout --all')
 
-def delete_image(name: str):
+def delete_image(name: str, force: typing.Optional[bool] = False):
     from vyos.utils.process import rc_cmd
 
     if name == 'all':
@@ -72,9 +112,33 @@ def delete_image(name: str):
         if not name: return
         # replace newline with whitespace
         name = name.replace('\n', ' ')
-    rc, output = rc_cmd(f'podman image rm {name}')
-    if rc != 0:
-        raise vyos.opmode.InternalError(output)
+        # convert to list
+        name = name.split()
+    else:
+        # convert str -> list for further processing down the line
+        name = [name]
+
+    for image in name:
+        # convert the truncated image ID to a full image ID
+        rc, ancestor = rc_cmd(f'podman inspect {image} --format "{{{{.Id}}}}"', stderr=None)
+        if rc != 0:
+            raise vyos.opmode.InternalError(ancestor)
+        # check if the image ID is an ancestor of any running container
+        rc, in_use = rc_cmd(f'podman ps --filter ancestor={ancestor} -q', stderr=None)
+        if rc != 0:
+            raise vyos.opmode.InternalError(in_use)
+
+        if bool(in_use):
+            error = f'Cannot delete image "{image}" because it is currently '\
+                    f'being used by container "{in_use}"!'
+            raise vyos.opmode.InternalError(error)
+
+        tmp = f'podman image rm {image}'
+        if force: tmp += ' --force'
+
+        rc, output = rc_cmd(tmp)
+        if rc != 0:
+            raise vyos.opmode.InternalError(output)
 
 def show_container(raw: bool):
     command = 'podman ps --all'
@@ -102,11 +166,22 @@ def show_network(raw: bool):
 
 def restart(name: str):
     from vyos.utils.process import rc_cmd
+    from vyos.config import Config
+    from vyos.container import restart_network
 
     rc, output = rc_cmd(f'systemctl restart vyos-container-{name}.service')
     if rc != 0:
-        print(output)
-        return None
+        rc2 = clean_layer(name)
+        if rc2 != 0:
+            print(output)
+            return None
+    if rc == 0:
+        conf = Config()
+        container = conf.get_config_dict(['container'], key_mangling=('-', '_'),
+                                    no_tag_node_value_mangle=True,
+                                    get_first_key=True,
+                                    with_recursive_defaults=True)
+        restart_network(container)
     print(f'Container "{name}" restarted!')
     return output
 

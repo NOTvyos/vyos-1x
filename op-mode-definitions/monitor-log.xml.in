@@ -17,19 +17,6 @@
             </properties>
             <command>SYSTEMD_COLORS=false grc journalctl --no-hostname --follow --boot</command>
           </node>
-          <node name="ids">
-            <properties>
-              <help>Monitor Intrusion Detection System log</help>
-            </properties>
-            <children>
-              <leafNode name="ddos-protection">
-                <properties>
-                  <help>Monitor last lines of DDOS protection</help>
-                </properties>
-                <command>journalctl --no-hostname --follow --boot --unit fastnetmon.service</command>
-              </leafNode>
-            </children>
-          </node>
           <leafNode name="certbot">
             <properties>
               <help>Monitor last lines of certbot log</help>
@@ -57,7 +44,15 @@
                 <properties>
                   <help>Monitor last lines of DHCP server log</help>
                 </properties>
-                <command>journalctl --no-hostname --follow --boot --unit kea-dhcp4-server.service</command>
+                <command>journalctl --no-hostname --follow --boot --unit isc-kea-dhcp4-server.service</command>
+                <children>
+                  <tagNode name="vrf">
+                    <properties>
+                      <help>Monitor last lines of DHCP server log on specific vrf</help>
+                    </properties>
+                    <command>journalctl --no-hostname --follow --boot --unit "isc-kea-dhcp4-server@$6.service"</command>
+                  </tagNode>
+                </children>
               </node>
               <node name="client">
                 <properties>
@@ -87,7 +82,15 @@
                 <properties>
                   <help>Monitor last lines of DHCPv6 server log</help>
                 </properties>
-                <command>journalctl --no-hostname --follow --boot --unit kea-dhcp6-server.service</command>
+                <command>journalctl --no-hostname --follow --boot --unit isc-kea-dhcp6-server.service</command>
+                <children>
+                  <tagNode name="vrf">
+                    <properties>
+                      <help>Monitor last lines of DHCPv6 server log on specific vrf</help>
+                    </properties>
+                    <command>journalctl --no-hostname --follow --boot --unit "isc-kea-dhcp6-server@$6.service"</command>
+                  </tagNode>
+                </children>
               </node>
               <node name="client">
                 <properties>
@@ -112,7 +115,7 @@
             <properties>
               <help>Monitor last lines of flow-accounting log</help>
             </properties>
-            <command>journalctl --no-hostname --boot --follow --unit uacctd.service</command>
+            <command>journalctl --no-hostname --boot --dmesg -g '^(ipt_NETFLOW|netflow): ' --follow</command>
           </leafNode>
           <leafNode name="haproxy">
             <properties>
@@ -243,6 +246,12 @@
                 </properties>
                 <command>journalctl --follow --no-hostname --boot /usr/lib/frr/isisd</command>
               </leafNode>
+              <leafNode name="openfabric">
+                <properties>
+                  <help>Monitor log for OpenFabric</help>
+                </properties>
+                <command>journalctl --follow --no-hostname --boot /usr/lib/frr/fabricd</command>
+              </leafNode>
               <leafNode name="nhrp">
                 <properties>
                   <help>Monitor log for NHRP</help>
@@ -364,6 +373,12 @@
               <help>Monitor last lines of Virtual Router Redundancy Protocol log</help>
             </properties>
             <command>journalctl --no-hostname --boot --follow --unit keepalived.service</command>
+          </leafNode>
+          <leafNode name="vyos-configd">
+            <properties>
+              <help>Monitor last lines of VyOS configuration daemon log</help>
+            </properties>
+            <command>journalctl --no-hostname --boot --follow --unit vyos-configd.service</command>
           </leafNode>
           <leafNode name="vyos-domain-resolver">
             <properties>

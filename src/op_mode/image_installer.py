@@ -26,6 +26,7 @@ from os import environ
 from os import readlink
 from os import getpid
 from os import getppid
+from os import sync
 from json import loads
 from json import dumps
 from typing import Union
@@ -36,6 +37,8 @@ from errno import ENOSPC
 from psutil import disk_partitions
 
 from vyos.configtree import ConfigTree
+from vyos.defaults import base_dir
+from vyos.defaults import directories
 from vyos.remote import download
 from vyos.system import disk
 from vyos.system import grub
@@ -50,6 +53,8 @@ from vyos.utils.io import ask_input, ask_yes_no, select_entry
 from vyos.utils.file import chmod_2775
 from vyos.utils.file import read_file
 from vyos.utils.process import cmd, run, rc_cmd
+from vyos.utils.auth import get_local_users
+from vyos.utils.auth import get_user_home_dir
 from vyos.version import get_version_data
 from vyos.utils.file import write_file
 
@@ -108,6 +113,7 @@ CONST_MIN_ROOT_SIZE: int = 1610612736  # 1.5 GB
 CONST_RESERVED_SPACE: int = (2 + 1 + 256) * 1024**2
 
 # define directories and paths
+DIR_CONFIG: str = directories['config']
 DIR_INSTALLATION: str = '/mnt/installation'
 DIR_ROOTFS_SRC: str = f'{DIR_INSTALLATION}/root_src'
 DIR_ROOTFS_DST: str = f'{DIR_INSTALLATION}/root_dst'
@@ -117,8 +123,8 @@ DIR_KERNEL_SRC: str = '/boot/'
 FILE_ROOTFS_SRC: str = '/usr/lib/live/mount/medium/live/filesystem.squashfs'
 ISO_DOWNLOAD_PATH: str = ''
 
-external_download_script = '/usr/libexec/vyos/simple-download.py'
-external_latest_image_url_script = '/usr/libexec/vyos/latest-image-url.py'
+external_download_script: str = f'{base_dir}/simple-download.py'
+external_latest_image_url_script: str = f'{base_dir}/latest-image-url.py'
 
 # default boot variables
 DEFAULT_BOOT_VARS: dict[str, str] = {
@@ -336,7 +342,7 @@ def copy_preserve_owner(src: str, dst: str, *, follow_symlinks=True):
 
 def copy_previous_installation_data(target_dir: str) -> None:
     if Path('/mnt/config').exists():
-        copytree('/mnt/config', f'{target_dir}/opt/vyatta/etc/config',
+        copytree('/mnt/config', f'{target_dir}{DIR_CONFIG}',
                  dirs_exist_ok=True)
     if Path('/mnt/ssh').exists():
         copytree('/mnt/ssh', f'{target_dir}/etc/ssh',
@@ -485,10 +491,13 @@ def setup_grub(root_dir: str) -> None:
 def get_cli_kernel_options(config_file: str) -> list:
     config = ConfigTree(read_file(config_file))
     config_dict = loads(config.to_json())
+    cmdline_options = []
     kernel_options = dict_search('system.option.kernel', config_dict)
     if kernel_options is None:
-        kernel_options = {}
-    cmdline_options = []
+        return cmdline_options
+
+    k_cpu_opts = kernel_options.get('cpu', {})
+    k_memory_opts = kernel_options.get('memory', {})
 
     # XXX: This code path and if statements must be kept in sync with the Kernel
     # option handling in system_options.py:generate(). This occurance is used
@@ -503,6 +512,47 @@ def get_cli_kernel_options(config_file: str) -> list:
             f'initcall_blacklist=acpi_cpufreq_init amd_pstate={mode}')
     if 'quiet' in kernel_options:
         cmdline_options.append('quiet')
+
+    if 'disable-hpet' in kernel_options:
+        cmdline_options.append('hpet=disable')
+
+    if 'disable-mce' in kernel_options:
+        cmdline_options.append('mce=off')
+
+    if 'disable-softlockup' in kernel_options:
+        cmdline_options.append('nosoftlockup')
+
+    # CPU options
+    isol_cpus = k_cpu_opts.get('isolate-cpus')
+    if isol_cpus:
+        cmdline_options.append(f'isolcpus={isol_cpus}')
+
+    nohz_full = k_cpu_opts.get('nohz-full')
+    if nohz_full:
+        cmdline_options.append(f'nohz_full={nohz_full}')
+
+    rcu_nocbs = k_cpu_opts.get('rcu-no-cbs')
+    if rcu_nocbs:
+        cmdline_options.append(f'rcu_nocbs={rcu_nocbs}')
+
+    if 'disable-nmi-watchdog' in k_cpu_opts:
+        cmdline_options.append('nmi_watchdog=0')
+
+    # Memory options
+    if 'disable-numa-balancing' in k_memory_opts:
+        cmdline_options.append('numa_balancing=disable')
+
+    default_hp_size = k_memory_opts.get('default-hugepage-size')
+    if default_hp_size:
+        cmdline_options.append(f'default_hugepagesz={default_hp_size}')
+
+    hp_sizes = k_memory_opts.get('hugepage-size')
+    if hp_sizes:
+        for size, settings in hp_sizes.items():
+            cmdline_options.append(f'hugepagesz={size}')
+            count = settings.get('hugepage-count')
+            if count:
+                cmdline_options.append(f'hugepages={count}')
 
     return cmdline_options
 
@@ -645,7 +695,7 @@ def migrate_config() -> bool:
     Returns:
         bool: user's decision
     """
-    active_config_path: Path = Path('/opt/vyatta/etc/config/config.boot')
+    active_config_path: Path = Path(f'{DIR_CONFIG}/config.boot')
     if active_config_path.exists():
         if ask_yes_no(MSG_INPUT_CONFIG_FOUND, default=True):
             return True
@@ -661,6 +711,20 @@ def copy_ssh_host_keys() -> bool:
     if ask_yes_no('Would you like to copy SSH host keys?', default=True):
         return True
     return False
+
+
+def copy_ssh_known_hosts() -> bool:
+    """Ask user to copy SSH `known_hosts` files
+
+    Returns:
+        bool: user's decision
+    """
+    known_hosts_files = get_known_hosts_files()
+    msg = (
+        'Would you like to save the SSH known hosts (fingerprints) '
+        'from your current configuration?'
+    )
+    return known_hosts_files and ask_yes_no(msg, default=True)
 
 
 def console_hint() -> str:
@@ -819,7 +883,7 @@ def install_image() -> None:
                                   valid_responses=['K', 'S'])
     console_dict: dict[str, str] = {'K': 'tty', 'S': 'ttyS'}
 
-    config_boot_list = ['/opt/vyatta/etc/config/config.boot',
+    config_boot_list = [f'{DIR_CONFIG}/config.boot',
                         '/opt/vyatta/etc/config.boot.default']
     default_config = config_boot_list[0]
 
@@ -855,7 +919,7 @@ def install_image() -> None:
         # a config dir. It is the deepest one, so the comand will
         # create all the rest in a single step
         print('Creating a configuration file')
-        target_config_dir: str = f'{DIR_DST_ROOT}/boot/{image_name}/rw/opt/vyatta/etc/config/'
+        target_config_dir: str = f'{DIR_DST_ROOT}/boot/{image_name}/rw{DIR_CONFIG}/'
         Path(target_config_dir).mkdir(parents=True)
         chown(target_config_dir, group='vyattacfg')
         chmod_2775(target_config_dir)
@@ -947,6 +1011,55 @@ def install_image() -> None:
         exit(1)
 
 
+def get_known_hosts_files(for_root=True, for_users=True) -> list:
+    """Collect all existing `known_hosts` files for root and/or users under /home"""
+
+    files = []
+
+    if for_root:
+        base_files = ('/root/.ssh/known_hosts', '/etc/ssh/ssh_known_hosts')
+        for file_path in base_files:
+            root_known_hosts = Path(file_path)
+            if root_known_hosts.exists():
+                files.append(root_known_hosts)
+
+    if for_users:  # for each non-system user
+        for user in get_local_users():
+            home_dir = Path(get_user_home_dir(user))
+            if home_dir.exists():
+                known_hosts = home_dir / '.ssh' / 'known_hosts'
+                if known_hosts.exists():
+                    files.append(known_hosts)
+
+    return files
+
+
+def migrate_known_hosts(target_dir: str):
+    """Copy `known_hosts` for root and all users to the new image directory"""
+
+    def _mkdir_and_copy_file(known_hosts_file, target_known_hosts):
+        target_known_hosts.parent.mkdir(parents=True, exist_ok=True)
+        copy(known_hosts_file, target_known_hosts)
+
+    # Copy root only files using default path
+    known_hosts_files = get_known_hosts_files(for_root=True, for_users=False)
+    for known_hosts_file in known_hosts_files:
+        target_known_hosts = Path(f'{target_dir}{known_hosts_file}')
+        _mkdir_and_copy_file(known_hosts_file, target_known_hosts)
+
+    # During image installation, backup critical user-specific files (e.g., known_hosts)
+    # from each user's home directory into /var/.users_backups/{user}. This ensures that their
+    # SSH configuration and trust relationships are preserved across system re-installations
+    # or provisioning.
+    # More details: https://github.com/vyos/vyos-1x/pull/4678#pullrequestreview-3169648265
+    known_hosts_files = get_known_hosts_files(for_root=False, for_users=True)
+    for known_hosts_file in known_hosts_files:
+        username = known_hosts_file.parent.parent.name
+        base_dir = Path(f'{target_dir}/var/.users_backups/{username}')
+        target_known_hosts = base_dir / '.ssh' / 'known_hosts'
+        _mkdir_and_copy_file(known_hosts_file, target_known_hosts)
+
+
 @compat.grub_cfg_update
 def add_image(image_path: str, vrf: str = None, username: str = '',
               password: str = '', no_prompt: bool = False, force: bool = False) -> None:
@@ -1020,24 +1133,45 @@ def add_image(image_path: str, vrf: str = None, username: str = '',
         # find target directory
         root_dir: str = disk.find_persistence()
 
+        cmdline_options = []
+
         # a config dir. It is the deepest one, so the comand will
         # create all the rest in a single step
-        target_config_dir: str = f'{root_dir}/boot/{image_name}/rw/opt/vyatta/etc/config/'
+        target_config_dir: str = f'{root_dir}/boot/{image_name}/rw{DIR_CONFIG}/'
         # copy config
         if no_prompt or migrate_config():
-            print('Copying configuration directory')
-            # copytree preserves perms but not ownership:
-            Path(target_config_dir).mkdir(parents=True)
-            chown(target_config_dir, group='vyattacfg')
-            chmod_2775(target_config_dir)
-            copytree('/opt/vyatta/etc/config/', target_config_dir, symlinks=True,
-                     copy_function=copy_preserve_owner, dirs_exist_ok=True)
+            if Path('/dev/mapper/vyos_config').exists():
+                print('Copying encrypted configuration volume')
 
-            # Record information from which image we upgraded to the new one.
-            # This can be used for a future automatic rollback into the old image.
-            tmp = {'previous_image' : image.get_running_image()}
-            write_file(f'{target_config_dir}/first_boot', dumps(tmp))
+                # Record information from which image we upgraded to the new one.
+                # This can be used for a future automatic rollback into the old image.
+                #
+                # For encrypted config, we need to copy, sync filesystems and remove from current image
+                tmp = {'previous_image' : image.get_running_image()}
+                write_file('/opt/vyatta/etc/config/first_boot', dumps(tmp))
+                sync()
 
+                # Copy encrypteed volumes
+                current_name = image.get_running_image()
+                current_config_path = f'{root_dir}/luks/{current_name}'
+                target_config_path = f'{root_dir}/luks/{image_name}'
+                copy(current_config_path, target_config_path)
+
+                # Now remove from current image
+                Path('/opt/vyatta/etc/config/first_boot').unlink()
+            else:
+                print('Copying configuration directory')
+                # copytree preserves perms but not ownership:
+                Path(target_config_dir).mkdir(parents=True)
+                chown(target_config_dir, group='vyattacfg')
+                chmod_2775(target_config_dir)
+                copytree(f'{DIR_CONFIG}/', target_config_dir, symlinks=True,
+                        copy_function=copy_preserve_owner, dirs_exist_ok=True)
+
+                # Record information from which image we upgraded to the new one.
+                # This can be used for a future automatic rollback into the old image.
+                tmp = {'previous_image' : image.get_running_image()}
+                write_file(f'{target_config_dir}/first_boot', dumps(tmp))
         else:
             Path(target_config_dir).mkdir(parents=True)
             chown(target_config_dir, group='vyattacfg')
@@ -1051,6 +1185,11 @@ def add_image(image_path: str, vrf: str = None, username: str = '',
             host_keys: list[str] = glob('/etc/ssh/ssh_host*')
             for host_key in host_keys:
                 copy(host_key, target_ssh_dir)
+
+        target_ssh_known_hosts_dir: str = f'{root_dir}/boot/{image_name}/rw'
+        if no_prompt or copy_ssh_known_hosts():
+            print('Copying SSH known_hosts files')
+            migrate_known_hosts(target_ssh_known_hosts_dir)
 
         # copy system image and kernel files
         print('Copying system image files')
@@ -1069,11 +1208,12 @@ def add_image(image_path: str, vrf: str = None, username: str = '',
         if set_as_default:
             grub.set_default(image_name, root_dir)
 
-        cmdline_options = get_cli_kernel_options(
-            f'{target_config_dir}/config.boot')
-        grub_util.update_kernel_cmdline_options(' '.join(cmdline_options),
-                                                root_dir=root_dir,
-                                                version=image_name)
+        if Path(f'{target_config_dir}/config.boot').exists():
+            cmdline_options = get_cli_kernel_options(
+                f'{target_config_dir}/config.boot')
+            grub_util.update_kernel_cmdline_options(' '.join(cmdline_options),
+                                                    root_dir=root_dir,
+                                                    version=image_name)
 
     except OSError as e:
         # if no space error, remove image dir and cleanup

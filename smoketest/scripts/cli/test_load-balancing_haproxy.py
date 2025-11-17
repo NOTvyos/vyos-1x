@@ -166,6 +166,9 @@ class TestLoadBalancingReverseProxy(VyOSUnitTestSHIM.TestCase):
         # Process must be terminated after deleting the config
         self.assertFalse(process_named_running(PROCESS_NAME))
 
+        # always forward to base class
+        super().tearDown()
+
     def base_config(self):
         self.cli_set(base_path + ['service', haproxy_service_name, 'mode', 'http'])
         self.cli_set(base_path + ['service', haproxy_service_name, 'port', '4433'])
@@ -202,6 +205,7 @@ class TestLoadBalancingReverseProxy(VyOSUnitTestSHIM.TestCase):
         rule_ten = '10'
         rule_twenty = '20'
         rule_thirty = '30'
+        rule_forty = '40'
         send_proxy = 'send-proxy'
         max_connections = '1000'
 
@@ -216,6 +220,9 @@ class TestLoadBalancingReverseProxy(VyOSUnitTestSHIM.TestCase):
         self.cli_set(base_path + ['service', frontend, 'rule', rule_twenty, 'set', 'backend', bk_second_name])
         self.cli_set(base_path + ['service', frontend, 'rule', rule_thirty, 'url-path', 'end', '/test'])
         self.cli_set(base_path + ['service', frontend, 'rule', rule_thirty, 'set', 'backend', bk_second_name])
+        self.cli_set(base_path + ['service', frontend, 'rule', rule_forty, 'domain-name', domain_bk_second])
+        self.cli_set(base_path + ['service', frontend, 'rule', rule_forty, 'set', 'backend', bk_second_name])
+        self.cli_set(base_path + ['service', frontend, 'rule', rule_forty, 'wildcard-domain'])
 
         self.cli_set(back_base + [bk_first_name, 'mode', mode])
         self.cli_set(back_base + [bk_first_name, 'server', bk_first_name, 'address', bk_server_first])
@@ -248,6 +255,8 @@ class TestLoadBalancingReverseProxy(VyOSUnitTestSHIM.TestCase):
         self.assertIn(f'use_backend {bk_second_name} if {rule_twenty}', config)
         self.assertIn(f'acl {rule_thirty} path -i -m end /test', config)
         self.assertIn(f'use_backend {bk_second_name} if {rule_thirty}', config)
+        self.assertIn(f'acl {rule_forty} hdr(host) -i -m end .{domain_bk_second}', config)
+        self.assertIn(f'use_backend {bk_second_name} if {rule_forty}', config)
 
         # Backend
         self.assertIn(f'backend {bk_first_name}', config)
@@ -479,6 +488,66 @@ class TestLoadBalancingReverseProxy(VyOSUnitTestSHIM.TestCase):
         config = read_file(HAPROXY_CONF)
         self.assertIn(f'option smtpchk', config)
 
+    def test_reverse_proxy_tcp_health_checks_custom_port(self):
+        # Define variables
+        service = 'my-tcp-api'
+        mode = 'tcp'
+        front_port = '9000'
+        backend = 'bk-01'
+        balance = 'round-robin'
+        servers = [
+            ('srv01', '192.0.2.11', '9001', '9011'),
+            ('srv02', '192.0.2.12', '9002', None),
+            ('srv03', '192.0.2.13', '9003', '9013'),
+        ]
+
+        # Configure frontend
+        self.cli_set(base_path + ['service', service, 'backend', backend])
+        self.cli_set(base_path + ['service', service, 'mode', mode])
+        self.cli_set(base_path + ['service', service, 'port', front_port])
+
+        # Configure backend
+        self.cli_set(base_path + ['backend', backend, 'balance', balance])
+        self.cli_set(base_path + ['backend', backend, 'mode', mode])
+
+        # Configure backend servers
+        for name, addr, port, check_port in servers:
+            base_server_path = base_path + ['backend', backend, 'server', name]
+            self.cli_set(base_server_path + ['address', addr])
+            self.cli_set(base_server_path + ['port', port])
+
+            if check_port:
+                self.cli_set(base_server_path + ['check', 'port', check_port])
+            else:
+                self.cli_set(base_server_path + ['check'])
+
+        # Commit and read config
+        self.cli_commit()
+        config = read_file(HAPROXY_CONF)
+        config_lines = [line.strip() for line in config.splitlines()]
+
+        # Validate Frontend
+        self.assertIn(f'frontend {service}', config)
+        self.assertIn(f'bind [::]:{front_port} v4v6', config)
+        self.assertIn(f'mode {mode}', config)
+        self.assertIn(f'default_backend {backend}', config)
+
+        # Validate Backend
+        self.assertIn(f'backend {backend}', config)
+        self.assertIn('balance roundrobin', config)
+        self.assertIn(f'mode {mode}', config)
+
+        # Validate backend servers
+        for name, addr, port, check_port in servers:
+            with self.subTest(name=name):
+                expected_line = f'server {name} {addr}:{port}'
+                if check_port:
+                    expected_line += f' check port {check_port}'
+                else:
+                    expected_line += f' check'
+
+                self.assertIn(expected_line, config_lines)
+
     def test_reverse_proxy_logging(self):
         # Setup base
         self.base_config()
@@ -612,4 +681,4 @@ class TestLoadBalancingReverseProxy(VyOSUnitTestSHIM.TestCase):
         self.assertIn(f'server localhost 127.0.0.1:{port}', config[backend_name])
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=2, failfast=VyOSUnitTestSHIM.TestCase.debug_on())

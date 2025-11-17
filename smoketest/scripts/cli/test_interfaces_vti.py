@@ -17,6 +17,7 @@
 import unittest
 
 from base_interfaces_test import BasicInterfaceTest
+from base_vyostest_shim import VyOSUnitTestSHIM
 
 from vyos.ifconfig import Interface
 from vyos.utils.network import is_intf_addr_assigned
@@ -39,10 +40,11 @@ class VTIInterfaceTest(BasicInterfaceTest.TestCase):
 
         self.cli_commit()
 
-        # VTI interface are always down and only brought up by IPSec
+        # VTI interfaces are default down and only brought up when an
+        # IPSec connection is configured to use them
         for intf in self._interfaces:
             self.assertTrue(is_intf_addr_assigned(intf, addr))
             self.assertEqual(Interface(intf).get_admin_state(), 'down')
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=2, failfast=VyOSUnitTestSHIM.TestCase.debug_on())

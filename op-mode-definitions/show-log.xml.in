@@ -62,19 +62,6 @@
             </properties>
             <command>journalctl --no-hostname --boot --unit conserver-server.service</command>
           </leafNode>
-          <node name="ids">
-            <properties>
-              <help>Show log for for Intrusion Detection System</help>
-            </properties>
-            <children>
-              <leafNode name="ddos-protection">
-                <properties>
-                  <help>Show log for DDOS protection</help>
-                </properties>
-                <command>journalctl --no-hostname --boot --unit fastnetmon.service</command>
-              </leafNode>
-            </children>
-          </node>
           <node name="dhcp">
             <properties>
               <help>Show log for Dynamic Host Control Protocol (DHCP)</help>
@@ -84,7 +71,15 @@
                 <properties>
                   <help>Show log for DHCP server</help>
                 </properties>
-                <command>journalctl --no-hostname --boot --unit kea-dhcp4-server.service</command>
+                <command>journalctl --no-hostname --boot --unit isc-kea-dhcp4-server.service</command>
+                <children>
+                  <tagNode name="vrf">
+                    <properties>
+                      <help>Monitor last lines of DHCP server log on specific vrf</help>
+                    </properties>
+                    <command>journalctl --no-hostname --follow --boot --unit "isc-kea-dhcp4-server@$6.service"</command>
+                  </tagNode>
+                </children>
               </node>
               <node name="client">
                 <properties>
@@ -114,7 +109,15 @@
                 <properties>
                   <help>Show log for DHCPv6 server</help>
                 </properties>
-                <command>journalctl --no-hostname --boot --unit kea-dhcp6-server.service</command>
+                <command>journalctl --no-hostname --boot --unit isc-kea-dhcp6-server.service</command>
+                <children>
+                  <tagNode name="vrf">
+                    <properties>
+                      <help>Monitor last lines of DHCPv6 server log on specific vrf</help>
+                    </properties>
+                    <command>journalctl --no-hostname --boot --unit "isc-kea-dhcp6-server@$6.service"</command>
+                  </tagNode>
+                </children>
               </node>
               <node name="client">
                 <properties>
@@ -531,7 +534,7 @@
             <properties>
               <help>Show log for flow-accounting</help>
             </properties>
-            <command>journalctl --no-hostname --boot --unit uacctd.service</command>
+            <command>journalctl --no-hostname --boot --dmesg -g '^(ipt_NETFLOW|netflow): '</command>
           </leafNode>
           <leafNode name="haproxy">
             <properties>
@@ -773,6 +776,12 @@
                 </properties>
                 <command>journalctl --boot /usr/lib/frr/isisd</command>
               </leafNode>
+              <leafNode name="openfabric">
+                <properties>
+                  <help>Show log for OpenFabric</help>
+                </properties>
+                <command>journalctl --boot /usr/lib/frr/fabricd</command>
+              </leafNode>
               <leafNode name="nhrp">
                 <properties>
                   <help>Show log for NHRP</help>
@@ -827,22 +836,22 @@
           </node>
           <tagNode name="tail">
             <properties>
-              <help>Show last n changes to messages</help>
+              <help>Show given number of the latest log messages</help>
               <completionHelp>
                 <list>&lt;NUMBER&gt;</list>
               </completionHelp>
             </properties>
-            <command>tail -n "$4" /var/log/messages | ${VYATTA_PAGER:-cat}</command>
+            <command>journalctl --reverse --lines "$4"</command>
           </tagNode>
           <node name="tail">
             <properties>
-              <help>Show last 10 lines of /var/log/messages file</help>
+              <help>Show given number of the latest log messages (default: 10)</help>
             </properties>
-            <command>tail -n 10 /var/log/messages</command>
+            <command>journalctl --reverse --lines 10</command>
           </node>
           <leafNode name="vpn">
             <properties>
-              <help>Monitor last lines of ALL Virtual Private Network services</help>
+              <help>Show log for ALL Virtual Private Network services</help>
             </properties>
             <command>journalctl --no-hostname --boot --unit strongswan.service --unit accel-ppp@*.service --unit ocserv.service</command>
           </leafNode>
@@ -898,6 +907,12 @@
               <help>Show log for Virtual Router Redundancy Protocol (VRRP)</help>
             </properties>
             <command>journalctl --no-hostname --boot --unit keepalived.service</command>
+          </leafNode>
+          <leafNode name="vyos-configd">
+            <properties>
+              <help>Show log for VyOS configuration daemon</help>
+            </properties>
+            <command>journalctl --no-hostname --boot --unit vyos-configd.service</command>
           </leafNode>
           <leafNode name="vyos-domain-resolver">
             <properties>

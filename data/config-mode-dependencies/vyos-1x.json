@@ -5,7 +5,7 @@
     },
     "firewall": {
         "conntrack": ["system_conntrack"],
-        "group_resync": ["system_conntrack", "nat", "policy_route"]
+        "group_resync": ["system_conntrack", "nat", "policy_route", "load-balancing_wan"]
     },
     "interfaces_bonding": {
         "ethernet": ["interfaces_ethernet"]
@@ -79,5 +79,8 @@
     },
     "system_wireless": {
         "wireless": ["interfaces_wireless"]
+    },
+    "system_sflow": {
+        "vpp_sflow": ["vpp_sflow"]
     }
 }

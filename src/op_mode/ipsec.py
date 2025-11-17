@@ -230,17 +230,25 @@ def _get_parent_sa_state(connection_name: str, data: list) -> str:
     return ike_state
 
 
-def _get_child_sa_state(connection_name: str, tunnel_name: str, data: list) -> str:
+def _get_child_sa_state(
+    connection_name: str, tunnel_name: str, data: list, mode: str
+) -> str:
     """Get child SA state by connection and tunnel name
 
     Args:
         connection_name (str): Connection name
         tunnel_name (str): Tunnel name
         data (list): List of current SAs from vici
+        mode (str): Mode of child from vici list_connections
 
     Returns:
-        str: `up` if child SA state is 'installed' otherwise `down`
+        str: `up` if child SA state is 'installed' or child is passthrough
+             otherwise `down`
     """
+    # passthrough child (trap mode) has 'PASS' mode and is always up,
+    # but has no sa, so is not present in list_sas (data)
+    if mode == 'PASS':
+        return 'up'
     child_sa = 'down'
     if not data:
         return child_sa
@@ -330,7 +338,8 @@ def _get_raw_data_connections(list_connections: list, list_sas: list) -> list:
             base_list['children'] = []
             children = conn_conf['children']
             for tunnel, tun_options in children.items():
-                state = _get_child_sa_state(connection, tunnel, list_sas)
+                mode = tun_options.get('mode')
+                state = _get_child_sa_state(connection, tunnel, list_sas, mode)
                 local_ts = tun_options.get('local-ts')
                 remote_ts = tun_options.get('remote-ts')
                 dpd_action = tun_options.get('dpd_action')
@@ -700,15 +709,6 @@ def reset_profile_dst(profile: str, tunnel: str, nbma_dst: str):
                     ]
                 )
             )
-            # initiate IKE SAs
-            for ike in sa_nbma_list:
-                if ike_sa_name in ike:
-                    vyos.ipsec.vici_initiate(
-                        ike_sa_name,
-                        'dmvpn',
-                        ike[ike_sa_name]['local-host'],
-                        ike[ike_sa_name]['remote-host'],
-                    )
             print(
                 f'Profile {profile} tunnel {tunnel} remote-host {nbma_dst} reset result: success'
             )
@@ -732,18 +732,6 @@ def reset_profile_all(profile: str, tunnel: str):
                 )
             # terminate IKE SAs
             vyos.ipsec.terminate_vici_by_name(ike_sa_name, None)
-            # initiate IKE SAs
-            for ike in sa_list:
-                if ike_sa_name in ike:
-                    vyos.ipsec.vici_initiate(
-                        ike_sa_name,
-                        'dmvpn',
-                        ike[ike_sa_name]['local-host'],
-                        ike[ike_sa_name]['remote-host'],
-                    )
-                print(
-                    f'Profile {profile} tunnel {tunnel} remote-host {ike[ike_sa_name]["remote-host"]} reset result: success'
-                )
             print(f'Profile {profile} tunnel {tunnel} reset result: success')
         except vyos.ipsec.ViciInitiateError as err:
             raise vyos.opmode.UnconfiguredSubsystem(err)

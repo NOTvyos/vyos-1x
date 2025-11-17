@@ -20,17 +20,22 @@ import unittest
 from glob import glob
 from json import loads
 
-from netifaces import AF_INET
-from netifaces import AF_INET6
-from netifaces import ifaddresses
+from socket import AF_INET
+from socket import AF_INET6
+from netifaces import ifaddresses # pylint: disable = no-name-in-module
 
 from base_interfaces_test import BasicInterfaceTest
+from base_vyostest_shim import VyOSUnitTestSHIM
+
 from vyos.configsession import ConfigSessionError
+from vyos.frrender import mgmt_daemon
 from vyos.ifconfig import Section
-from vyos.utils.process import cmd
-from vyos.utils.process import popen
 from vyos.utils.file import read_file
+from vyos.utils.network import is_intf_addr_assigned
 from vyos.utils.network import is_ipv6_link_local
+from vyos.utils.process import cmd
+from vyos.utils.process import process_named_running
+from vyos.utils.process import popen
 
 class EthernetInterfaceTest(BasicInterfaceTest.TestCase):
     @classmethod
@@ -79,6 +84,9 @@ class EthernetInterfaceTest(BasicInterfaceTest.TestCase):
             # Ensure no VLAN interfaces are left behind
             tmp = [x for x in Section.interfaces('ethernet') if x.startswith(f'{interface}.')]
             self.assertListEqual(tmp, [])
+
+        # check process health and continuity
+        self.assertEqual(self.mgmt_daemon_pid, process_named_running(mgmt_daemon))
 
     def test_offloading_rps(self):
         # enable RPS on all available CPUs, RPS works with a CPU bitmask,
@@ -212,15 +220,15 @@ class EthernetInterfaceTest(BasicInterfaceTest.TestCase):
                 out = loads(out)
                 self.assertFalse(out[0]['autonegotiate'])
 
-    def test_ethtool_evpn_uplink_tarcking(self):
+    def test_ethtool_evpn_uplink_tracking(self):
         for interface in self._interfaces:
             self.cli_set(self._base_path + [interface, 'evpn', 'uplink'])
 
         self.cli_commit()
 
         for interface in self._interfaces:
-            frrconfig = self.getFRRconfig(f'interface {interface}', daemon='zebra')
-            self.assertIn(f' evpn mh uplink', frrconfig)
+            frrconfig = self.getFRRconfig(f'interface {interface}', stop_section='^exit')
+            self.assertIn(' evpn mh uplink', frrconfig)
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=2, failfast=VyOSUnitTestSHIM.TestCase.debug_on())

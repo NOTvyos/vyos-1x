@@ -20,11 +20,11 @@ from base_vyostest_shim import VyOSUnitTestSHIM
 
 from vyos.configsession import ConfigSessionError
 from vyos.ifconfig import Section
+from vyos.frrender import zebra_daemon
 from vyos.utils.process import process_named_running
 from vyos.utils.system import sysctl_read
 
 base_path = ['protocols', 'segment-routing']
-PROCESS_NAME = 'zebra'
 
 class TestProtocolsSegmentRouting(VyOSUnitTestSHIM.TestCase):
     @classmethod
@@ -32,7 +32,7 @@ class TestProtocolsSegmentRouting(VyOSUnitTestSHIM.TestCase):
         # call base-classes classmethod
         super(TestProtocolsSegmentRouting, cls).setUpClass()
         # Retrieve FRR daemon PID - it is not allowed to crash, thus PID must remain the same
-        cls.daemon_pid = process_named_running(PROCESS_NAME)
+        cls.daemon_pid = process_named_running(zebra_daemon)
         # ensure we can also run this test on a live system - so lets clean
         # out the current configuration :)
         cls.cli_delete(cls, base_path)
@@ -42,7 +42,9 @@ class TestProtocolsSegmentRouting(VyOSUnitTestSHIM.TestCase):
         self.cli_commit()
 
         # check process health and continuity
-        self.assertEqual(self.daemon_pid, process_named_running(PROCESS_NAME))
+        self.assertEqual(self.daemon_pid, process_named_running(zebra_daemon))
+        # always forward to base class
+        super().tearDown()
 
     def test_srv6(self):
         interfaces = Section.interfaces('ethernet', vlan=False)
@@ -68,10 +70,10 @@ class TestProtocolsSegmentRouting(VyOSUnitTestSHIM.TestCase):
             self.assertEqual(sysctl_read(f'net.ipv6.conf.{interface}.seg6_enabled'), '1')
             self.assertEqual(sysctl_read(f'net.ipv6.conf.{interface}.seg6_require_hmac'), '0') # default
 
-        frrconfig = self.getFRRconfig(f'segment-routing', daemon='zebra')
-        self.assertIn(f'segment-routing', frrconfig)
-        self.assertIn(f' srv6', frrconfig)
-        self.assertIn(f'  locators', frrconfig)
+        frrconfig = self.getFRRconfig('segment-routing', stop_section='^exit')
+        self.assertIn('segment-routing', frrconfig)
+        self.assertIn(' srv6', frrconfig)
+        self.assertIn('  locators', frrconfig)
         for locator, locator_config in locators.items():
             self.assertIn(f'   locator {locator}', frrconfig)
             self.assertIn(f'    prefix {locator_config["prefix"]} block-len 40 node-len 24 func-bits 16', frrconfig)
@@ -107,4 +109,4 @@ class TestProtocolsSegmentRouting(VyOSUnitTestSHIM.TestCase):
         self.assertEqual(sysctl_read(f'net.ipv6.conf.{first_if}.seg6_enabled'), '0')
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=2, failfast=VyOSUnitTestSHIM.TestCase.debug_on())

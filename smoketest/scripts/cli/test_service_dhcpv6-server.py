@@ -26,7 +26,7 @@ from vyos.utils.process import process_named_running
 from vyos.utils.file import read_file
 
 PROCESS_NAME = 'kea-dhcp6'
-KEA6_CONF = '/run/kea/kea-dhcp6.conf'
+KEA6_CONF = '/var/run/kea/kea-dhcp6.conf'
 base_path = ['service', 'dhcpv6-server']
 
 subnet = '2001:db8:f00::/64'
@@ -56,6 +56,8 @@ class TestServiceDHCPv6Server(VyOSUnitTestSHIM.TestCase):
     def tearDown(self):
         self.cli_delete(base_path)
         self.cli_commit()
+        # always forward to base class
+        super().tearDown()
 
     def walk_path(self, obj, path):
         current = obj
@@ -108,6 +110,7 @@ class TestServiceDHCPv6Server(VyOSUnitTestSHIM.TestCase):
         self.cli_set(pool + ['lease-time', 'default', lease_time])
         self.cli_set(pool + ['lease-time', 'maximum', max_lease_time])
         self.cli_set(pool + ['lease-time', 'minimum', min_lease_time])
+        self.cli_set(pool + ['option', 'capwap-controller', dns_1])
         self.cli_set(pool + ['option', 'name-server', dns_1])
         self.cli_set(pool + ['option', 'name-server', dns_2])
         self.cli_set(pool + ['option', 'name-server', dns_2])
@@ -154,6 +157,10 @@ class TestServiceDHCPv6Server(VyOSUnitTestSHIM.TestCase):
         self.verify_config_value(obj, ['Dhcp6', 'shared-networks', 0, 'subnet6'], 'max-valid-lifetime', int(max_lease_time))
 
         # Verify options
+        self.verify_config_object(
+                obj,
+                ['Dhcp6', 'shared-networks', 0, 'subnet6', 0, 'option-data'],
+                {'name': 'capwap-ac-v6', 'data': dns_1})
         self.verify_config_object(
                 obj,
                 ['Dhcp6', 'shared-networks', 0, 'subnet6', 0, 'option-data'],
@@ -216,6 +223,7 @@ class TestServiceDHCPv6Server(VyOSUnitTestSHIM.TestCase):
         range_stop = inc_ip(subnet, 65535) # ::ffff
         delegate_start = '2001:db8:ee::'
         delegate_len = '64'
+        bad_prefix_len = '32'
         prefix_len = '56'
         exclude_len = '66'
 
@@ -224,11 +232,15 @@ class TestServiceDHCPv6Server(VyOSUnitTestSHIM.TestCase):
         self.cli_set(pool + ['range', '1', 'start', range_start])
         self.cli_set(pool + ['range', '1', 'stop', range_stop])
         self.cli_set(pool + ['prefix-delegation', 'prefix', delegate_start, 'delegated-length', delegate_len])
-        self.cli_set(pool + ['prefix-delegation', 'prefix', delegate_start, 'prefix-length', prefix_len])
+        self.cli_set(pool + ['prefix-delegation', 'prefix', delegate_start, 'prefix-length', bad_prefix_len])
         self.cli_set(pool + ['prefix-delegation', 'prefix', delegate_start, 'excluded-prefix', delegate_start])
         self.cli_set(pool + ['prefix-delegation', 'prefix', delegate_start, 'excluded-prefix-length', exclude_len])
 
         # commit changes
+        with self.assertRaises(ConfigSessionError):
+            self.cli_commit()
+
+        self.cli_set(pool + ['prefix-delegation', 'prefix', delegate_start, 'prefix-length', prefix_len])
         self.cli_commit()
 
         config = read_file(KEA6_CONF)
@@ -285,4 +297,4 @@ class TestServiceDHCPv6Server(VyOSUnitTestSHIM.TestCase):
         self.assertTrue(process_named_running(PROCESS_NAME))
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=2, failfast=VyOSUnitTestSHIM.TestCase.debug_on())

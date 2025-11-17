@@ -55,12 +55,12 @@ class TestServiceRADVD(VyOSUnitTestSHIM.TestCase):
     def tearDown(self):
         # Check for running process
         self.assertTrue(process_named_running(PROCESS_NAME))
-
         self.cli_delete(base_path)
         self.cli_commit()
-
         # Check for no longer running process
         self.assertFalse(process_named_running(PROCESS_NAME))
+        # always forward to base class
+        super().tearDown()
 
     def test_common(self):
         self.cli_set(base_path + ['prefix', prefix, 'no-on-link-flag'])
@@ -366,4 +366,4 @@ class TestServiceRADVD(VyOSUnitTestSHIM.TestCase):
         self.assertNotIn(tmp, config)
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=2, failfast=VyOSUnitTestSHIM.TestCase.debug_on())

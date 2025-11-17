@@ -71,6 +71,8 @@ class TestFirewall(VyOSUnitTestSHIM.TestCase):
         ]
 
         self.verify_nftables(nftables_search, 'ip vyos_filter', inverse=True)
+        # always forward to base class
+        super().tearDown()
 
     def wait_for_domain_resolver(self, table, set_name, element, max_wait=10):
         # Resolver no longer blocks commit, need to wait for daemon to populate set
@@ -401,9 +403,9 @@ class TestFirewall(VyOSUnitTestSHIM.TestCase):
         self.cli_commit()
 
         nftables_search = [
-            [f'daddr & 0.0.255.255 == 0.0.1.2'],
-            [f'saddr & 0.0.255.255 != 0.0.3.4'],
-            [f'saddr & 0.0.255.255 == @A_mask_group']
+            ['daddr & 0.0.255.255 == 0.0.1.2'],
+            ['saddr & 0.0.255.255 != 0.0.3.4'],
+            ['saddr & 0.0.255.255 == @A_mask_group']
         ]
 
         self.verify_nftables(nftables_search, 'ip vyos_filter')
@@ -1014,9 +1016,9 @@ class TestFirewall(VyOSUnitTestSHIM.TestCase):
             ['chain VYOS_ZONE_FORWARD'],
             ['type filter hook forward priority filter + 1'],
             ['oifname { "eth1", "eth2" }', 'counter packets', 'jump VZONE_ZONE1'],
-            ['oifname "eth0"', 'counter packets', 'jump VZONE_ZONE1'],
+            ['oifname "VRF-1"', 'counter packets', 'jump VZONE_ZONE1'],
             ['oifname "vtun66"', 'counter packets', 'jump VZONE_ZONE2'],
-            ['oifname "vti1"', 'counter packets', 'jump VZONE_ZONE2'],
+            ['oifname "VRF-2"', 'counter packets', 'jump VZONE_ZONE2'],
             ['chain VYOS_ZONE_LOCAL'],
             ['type filter hook input priority filter + 1'],
             ['counter packets', 'jump VZONE_LOCAL_IN'],
@@ -1049,9 +1051,9 @@ class TestFirewall(VyOSUnitTestSHIM.TestCase):
             ['chain VYOS_ZONE_FORWARD'],
             ['type filter hook forward priority filter + 1'],
             ['oifname { "eth1", "eth2" }', 'counter packets', 'jump VZONE_ZONE1'],
-            ['oifname "eth0"', 'counter packets', 'jump VZONE_ZONE1'],
+            ['oifname "VRF-1"', 'counter packets', 'jump VZONE_ZONE1'],
             ['oifname "vtun66"', 'counter packets', 'jump VZONE_ZONE2'],
-            ['oifname "vti1"', 'counter packets', 'jump VZONE_ZONE2'],
+            ['oifname "VRF-2"', 'counter packets', 'jump VZONE_ZONE2'],
             ['chain VYOS_ZONE_LOCAL'],
             ['type filter hook input priority filter + 1'],
             ['counter packets', 'jump VZONE_LOCAL_IN'],
@@ -1062,7 +1064,7 @@ class TestFirewall(VyOSUnitTestSHIM.TestCase):
             ['counter packets', 'drop', 'comment "zone_LOCAL default-action drop"'],
             ['chain VZONE_LOCAL_OUT'],
             ['oifname "vtun66"', 'counter packets', 'jump NAME6_LOCAL_to_ZONE2_v6'],
-            ['oifname "vti1"', 'counter packets', 'jump NAME6_LOCAL_to_ZONE2_v6'],
+            ['oifname "VRF-2"', 'counter packets', 'jump NAME6_LOCAL_to_ZONE2_v6'],
             ['counter packets', 'drop', 'comment "zone_LOCAL default-action drop"'],
             ['chain VZONE_ZONE1'],
             ['iifname { "eth1", "eth2" }', 'counter packets', 'return'],
@@ -1076,6 +1078,15 @@ class TestFirewall(VyOSUnitTestSHIM.TestCase):
 
         self.verify_nftables(nftables_search, 'ip vyos_filter')
         self.verify_nftables(nftables_search_v6, 'ip6 vyos_filter')
+
+    def test_zone_without_member(self):
+        self.cli_set(['firewall', 'zone', 'wan', 'default-action', 'drop'])
+        error_message = 'Zone "wan" has no interfaces and is not the local zone'
+        with self.assertRaisesRegex(ConfigSessionError, error_message):
+            self.cli_commit()
+
+        self.cli_set(['firewall', 'zone', 'wan', 'member', 'interface', 'eth1'])
+        self.cli_commit()
 
     def test_flow_offload(self):
         self.cli_set(['interfaces', 'ethernet', 'eth0', 'vif', '10'])
@@ -1324,4 +1335,4 @@ class TestFirewall(VyOSUnitTestSHIM.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=2, failfast=VyOSUnitTestSHIM.TestCase.debug_on())

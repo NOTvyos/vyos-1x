@@ -23,11 +23,11 @@ from glob import glob
 
 from ipaddress import IPv4Network
 from ipaddress import IPv6Interface
-from netifaces import ifaddresses
-# this is not the same as socket.AF_INET/INET6
-from netifaces import AF_INET
-from netifaces import AF_INET6
-
+from netifaces import ifaddresses # pylint: disable = no-name-in-module
+from socket import AF_INET
+from socket import AF_INET6
+from netaddr import EUI
+from netaddr import mac_unix_expanded
 from vyos.configdict import list_diff
 from vyos.configdict import dict_merge
 from vyos.configdict import get_vlan_ids
@@ -63,9 +63,6 @@ from vyos.ifconfig.vrrp import VRRP
 from vyos.ifconfig.operational import Operational
 from vyos.ifconfig import Section
 
-from netaddr import EUI
-from netaddr import mac_unix_expanded
-
 link_local_prefix = 'fe80::/64'
 
 class Interface(Control):
@@ -97,6 +94,10 @@ class Interface(Control):
         'alias': {
             'shellcmd': 'ip -json -detail link list dev {ifname}',
             'format': lambda j: jmespath.search('[*].ifalias | [0]', json.loads(j)) or '',
+        },
+        'ifindex': {
+            'shellcmd': 'ip -json -detail link list dev {ifname}',
+            'format': lambda j: jmespath.search('[*].ifindex | [0]', json.loads(j)) or '',
         },
         'mac': {
             'shellcmd': 'ip -json -detail link list dev {ifname}',
@@ -369,7 +370,7 @@ class Interface(Control):
         if 'netns' in self.config: cmd = f'ip netns exec {netns} {cmd}'
         self._cmd(cmd)
 
-    def remove(self):
+    def remove(self, skip_delete=False):
         """
         Remove interface from operating system. Removing the interface
         deconfigures all assigned IP addresses and clear possible DHCP(v6)
@@ -386,11 +387,19 @@ class Interface(Control):
 
         # remove all assigned IP addresses from interface - this is a bit redundant
         # as the kernel will remove all addresses on interface deletion, but we
-        # can not delete ALL interfaces, see below
+        # can not delete ALL interfaces, see below.
+        #
+        # This will internally stop DHCP(v6) if running
         self.flush_addrs()
 
         # remove interface from conntrack VRF interface map
         self._del_interface_from_ct_iface_map()
+
+        # Some interfaces - mainly veth pairs - should be properly de-configured
+        # but not deleted. Deleting one veth pair member will delete the other,
+        # we need need a way to skip the deletion.
+        if skip_delete:
+            return
 
         # ---------------------------------------------------------------------
         # Any class can define an eternal regex in its definition
@@ -414,7 +423,7 @@ class Interface(Control):
 
     def _nft_check_and_run(self, nft_command):
         # Check if deleting is possible first to avoid raising errors
-        _, err = self._popen(f'nft --check {nft_command}')
+        _, err = self._popen(f'nft --check {nft_command} 2>/dev/null')
         if not err:
             # Remove map element
             self._cmd(f'nft {nft_command}')
@@ -426,6 +435,17 @@ class Interface(Control):
     def _add_interface_to_ct_iface_map(self, vrf_table_id: int):
         nft_command = f'add element inet vrf_zones ct_iface_map {{ \'"{self.ifname}"\' : {vrf_table_id} }}'
         self._nft_check_and_run(nft_command)
+
+    def get_ifindex(self):
+        """
+        Get interface index by name
+
+        Example:
+        >>> from vyos.ifconfig import Interface
+        >>> Interface('eth0').get_ifindex()
+        '2'
+        """
+        return int(self.get_interface('ifindex'))
 
     def get_min_mtu(self):
         """
@@ -606,7 +626,7 @@ class Interface(Control):
         if 'netns' in self.config:
             return False
 
-        tmp = self.get_interface('vrf')
+        tmp = self.get_vrf()
         if tmp == vrf:
             return False
 
@@ -1340,6 +1360,9 @@ class Interface(Control):
         # stop DHCP(v6) if running
         self.set_dhcp(False)
         self.set_dhcpv6(False)
+
+        if not self.exists(self.ifname):
+            return
 
         netns = get_interface_namespace(self.ifname)
         netns_cmd = f'ip netns exec {netns}' if netns else ''

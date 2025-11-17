@@ -25,10 +25,12 @@ from filecmp import cmp
 from datetime import datetime
 from textwrap import dedent
 from pathlib import Path
-from tabulate import tabulate
 from shutil import copy, chown
+from subprocess import Popen
+from subprocess import DEVNULL
 from urllib.parse import urlsplit
 from urllib.parse import urlunsplit
+from tabulate import tabulate
 
 from vyos.config import Config
 from vyos.configtree import ConfigTree
@@ -45,6 +47,7 @@ from vyos.utils.boot import boot_configuration_complete
 from vyos.utils.process import is_systemd_service_active
 from vyos.utils.process import rc_cmd
 from vyos.defaults import DEFAULT_COMMIT_CONFIRM_MINUTES
+from vyos.component_version import append_system_version
 
 SAVE_CONFIG = '/usr/libexec/vyos/vyos-save-config.py'
 config_json = '/run/vyatta/config/config.json'
@@ -231,7 +234,14 @@ Proceed ?"""
         else:
             cmd = f'sudo -b /usr/libexec/vyos/commit-confirm-notify.py {minutes}'
 
-        os.system(cmd)
+        Popen(
+            cmd.split(),
+            stdout=DEVNULL,
+            stderr=DEVNULL,
+            stdin=DEVNULL,
+            close_fds=True,
+            preexec_fn=os.setsid,
+        )
 
         if self.reboot_unconfirmed:
             msg = f'Initialized commit-confirm; {minutes} minutes to confirm before reboot'
@@ -596,14 +606,16 @@ Proceed ?"""
         conf_file.chmod(0o644)
 
     def _archive_active_config(self) -> bool:
-        save_to_tmp = boot_configuration_complete() or not os.path.isfile(
-            archive_config_file
-        )
+        # on first boot/fresh install, add baseline archive_config_file
+        if not os.path.exists(archive_config_file):
+            append_system_version(archive_config_file)
+
         mask = os.umask(0o113)
 
         ext = os.getpid()
         cmp_saved = f'/tmp/config.boot.{ext}'
-        if save_to_tmp:
+
+        if boot_configuration_complete():
             save_config(cmp_saved, json_out=config_json)
         else:
             copy(config_file, cmp_saved)

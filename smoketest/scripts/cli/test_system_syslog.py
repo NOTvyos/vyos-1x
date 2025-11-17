@@ -67,6 +67,8 @@ class TestRSYSLOGService(VyOSUnitTestSHIM.TestCase):
 
         # Check for running process
         self.assertFalse(process_named_running(PROCESS_NAME))
+        # always forward to base class
+        super().tearDown()
 
     def test_console(self):
         level = 'warning'
@@ -305,4 +307,4 @@ class TestRSYSLOGService(VyOSUnitTestSHIM.TestCase):
                 self.cli_delete(['interfaces', 'dummy', f'dum{idx}'])
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=2, failfast=VyOSUnitTestSHIM.TestCase.debug_on())

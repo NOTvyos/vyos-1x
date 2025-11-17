@@ -16,25 +16,31 @@
 
 import os
 
+from copy import deepcopy
 from passlib.hosts import linux_context
 from psutil import users
 from pwd import getpwall
-from pwd import getpwnam
 from pwd import getpwuid
 from sys import exit
 from time import sleep
 
+from vyos.base import DeprecationWarning
 from vyos.config import Config
 from vyos.configdep import set_dependents
 from vyos.configdep import call_dependents
 from vyos.configverify import verify_vrf
+from vyos.defaults import SSH_DSA_DEPRECATION_WARNING
 from vyos.template import render
 from vyos.template import is_ipv4
 from vyos.utils.auth import get_current_user
+from vyos.utils.auth import get_local_users
+from vyos.utils.auth import get_user_home_dir
+from vyos.utils.auth import MIN_USER_UID
 from vyos.utils.configfs import delete_cli_node
 from vyos.utils.configfs import add_cli_node
 from vyos.utils.dict import dict_search
-from vyos.utils.file import chown
+from vyos.utils.file import move_recursive
+from vyos.utils.permission import chown
 from vyos.utils.process import cmd
 from vyos.utils.process import call
 from vyos.utils.process import run
@@ -49,11 +55,8 @@ radius_config_file = "/etc/pam_radius_auth.conf"
 tacacs_pam_config_file = "/etc/tacplus_servers"
 tacacs_nss_config_file = "/etc/tacplus_nss.conf"
 nss_config_file = "/etc/nsswitch.conf"
+login_motd_dsa_warning = r'/run/motd.d/92-vyos-user-dsa-deprecation-warning'
 
-# Minimum UID used when adding system users
-MIN_USER_UID: int = 1000
-# Maximim UID used when adding system users
-MAX_USER_UID: int = 59999
 # LOGIN_TIMEOUT from /etc/loign.defs minus 10 sec
 MAX_RADIUS_TIMEOUT: int = 50
 # MAX_RADIUS_TIMEOUT divided by 2 sec (minimum recomended timeout)
@@ -62,25 +65,11 @@ MAX_RADIUS_COUNT: int = 8
 MAX_TACACS_COUNT: int = 8
 # Minimum USER id for TACACS users
 MIN_TACACS_UID = 900
-# List of local user accounts that must be preserved
-SYSTEM_USER_SKIP_LIST: list = ['radius_user', 'radius_priv_user', 'tacacs0', 'tacacs1',
-                              'tacacs2', 'tacacs3', 'tacacs4', 'tacacs5', 'tacacs6',
-                              'tacacs7', 'tacacs8', 'tacacs9', 'tacacs10',' tacacs11',
-                              'tacacs12', 'tacacs13', 'tacacs14', 'tacacs15']
 
-def get_local_users(min_uid=MIN_USER_UID, max_uid=MAX_USER_UID):
-    """Return list of dynamically allocated users (see Debian Policy Manual)"""
-    local_users = []
-    for s_user in getpwall():
-        if getpwnam(s_user.pw_name).pw_uid < min_uid:
-            continue
-        if getpwnam(s_user.pw_name).pw_uid > max_uid:
-            continue
-        if s_user.pw_name in SYSTEM_USER_SKIP_LIST:
-            continue
-        local_users.append(s_user.pw_name)
+# As of OpenSSH 9.8p1 in Debian trixie, DSA keys are no longer supported
+SSH_DSA_DEPRECATION_WARNING: str = f'{SSH_DSA_DEPRECATION_WARNING} '\
+'The following users are using SSH-DSS keys for authentication.'
 
-    return local_users
 
 def get_shadow_password(username):
     with open('/etc/shadow') as f:
@@ -154,6 +143,17 @@ def verify(login):
                     raise ConfigError(f'Missing type for public-key "{pubkey}"!')
                 if 'key' not in pubkey_options:
                     raise ConfigError(f'Missing key for public-key "{pubkey}"!')
+
+    # Deprecation Warning for SSH DSS keys.
+    gen_header = True
+    if 'user' in login:
+        for user, user_config in login['user'].items():
+            for pubkey, pubkey_options in (dict_search('authentication.public_keys', user_config) or {}).items():
+                if 'type' in pubkey_options and pubkey_options['type'] == 'ssh-dss':
+                    if gen_header:
+                        gen_header = False
+                        DeprecationWarning(SSH_DSA_DEPRECATION_WARNING)
+                    print(f'User "{user}" with deprecated public-key named: {pubkey}')
 
     if {'radius', 'tacacs'} <= set(login):
         raise ConfigError('Using both RADIUS and TACACS at the same time is not supported!')
@@ -290,6 +290,12 @@ def generate(login):
         if os.path.isfile(autologout_file):
             os.unlink(autologout_file)
 
+    # Generate MOTD informing the user(s) for possible deprecated SSH keys
+    tmp = deepcopy(login)
+    tmp['ssh_dsa_deprecation_warning'] = f'DEPRECATION WARNING: {SSH_DSA_DEPRECATION_WARNING}'
+    render(login_motd_dsa_warning, 'login/motd_user_dsa_warning.j2', tmp,
+        permission=0o644, user='root', group='root')
+
     return None
 
 
@@ -315,9 +321,10 @@ def apply(login):
             tmp = dict_search('full_name', user_config)
             if tmp: command += f" --comment '{tmp}'"
 
-            tmp = dict_search('home_directory', user_config)
-            if tmp: command += f" --home '{tmp}'"
-            else: command += f" --home '/home/{user}'"
+            home_directory = dict_search('home_directory', user_config)
+            if not home_directory:
+                home_directory = f'/home/{user}'
+            command += f" --home '{home_directory}'"
 
             command += f' --groups frr,frrvty,vyattacfg,sudo,adm,dip,disk,_kea {user}'
             try:
@@ -326,7 +333,7 @@ def apply(login):
                 # crazy user will choose username root or any other system user which will fail.
                 #
                 # XXX: Should we deny using root at all?
-                home_dir = getpwnam(user).pw_dir
+                home_dir = get_user_home_dir(user)
                 # always re-render SSH keys with appropriate permissions
                 render(f'{home_dir}/.ssh/authorized_keys', 'login/authorized_keys.j2',
                        user_config, permission=0o600,
@@ -345,6 +352,17 @@ def apply(login):
 
             except Exception as e:
                 raise ConfigError(f'Adding user "{user}" raised exception: "{e}"')
+
+            # After invoking 'useradd' for each user, if /var/.users_backups/{user} exists, restore the
+            # backed up files to the newly created home directory. This reinstates the user's
+            # SSH environment and avoids loss of access or trust relationships due to the user
+            # creation process, which does not copy such custom files by default.
+            #
+            # More details: https://github.com/vyos/vyos-1x/pull/4678#pullrequestreview-3169648265
+            backup_directory = f"/var/.users_backups/{user}"
+            if command.startswith('useradd') and os.path.exists(backup_directory):
+                move_recursive(backup_directory, home_dir)
+                chown(home_dir, user=user, group='users', recursive=True)
 
             # T5875: ensure UID is properly set on home directory if user is re-added
             # the home directory will always exist, as it's created above by --create-home,
@@ -381,7 +399,7 @@ def apply(login):
                 # Disable user to prevent re-login
                 call(f'usermod -s /sbin/nologin {user}')
 
-                home_dir = getpwnam(user).pw_dir
+                home_dir = get_user_home_dir(user)
                 # Remove SSH authorized keys file
                 authorized_keys_file = f'{home_dir}/.ssh/authorized_keys'
                 if os.path.exists(authorized_keys_file):

@@ -188,6 +188,16 @@ def version_info_prune_component(x: VersionInfo, y: VersionInfo) -> VersionInfo:
         return
     x.component = { k: v for k,v in x.component.items() if k in y.component }
 
+def add_system_version_string(config_str: str = None) -> str:
+    """Wrap config string with system version and return string."""
+    version_info = version_info_from_system()
+    if config_str is not None:
+        version_info.update_config_body(config_str)
+    version_info.update_footer()
+
+    return version_info.write_string()
+
+
 def add_system_version(config_str: str = None, out_file: str = None):
     """Wrap config string with system version and write to out_file.
 
@@ -202,3 +212,11 @@ def add_system_version(config_str: str = None, out_file: str = None):
         version_info.write(out_file)
     else:
         sys.stdout.write(version_info.write_string())
+
+
+def append_system_version(file: str):
+    """Append system version data to existing file"""
+    version_info = version_info_from_system()
+    version_info.update_footer()
+    with open(file, 'a') as f:
+        f.write(version_info.write_string())

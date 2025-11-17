@@ -17,6 +17,7 @@
 import unittest
 
 from base_accel_ppp_test import BasicAccelPPPTest
+from base_vyostest_shim import VyOSUnitTestSHIM
 
 from configparser import ConfigParser
 from vyos.utils.file import read_file
@@ -39,6 +40,7 @@ class TestServicePPPoEServer(BasicAccelPPPTest.TestCase):
 
     def tearDown(self):
         self.cli_delete(local_if)
+        # always forward to base class
         super().tearDown()
 
     def verify(self, conf):
@@ -200,6 +202,19 @@ class TestServicePPPoEServer(BasicAccelPPPTest.TestCase):
         self.assertIn('accept-any-service=1', config)
         self.assertIn('accept-blank-service=1', config)
 
+    def test_accel_vpp_cp(self):
+        self.basic_config()
+        self.cli_commit()
+
+        self.set(['interface', interface, 'vpp-cp'])
+
+        # vpp-cp require VPP service to be started and interface is configured in VPP
+        with self.assertRaises(ConfigSessionError):
+            self.cli_commit()
+
+        # All other checks for PPPoE control-plane integration
+        # with VPP are verified in test_vpp.py
+
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=2, failfast=VyOSUnitTestSHIM.TestCase.debug_on())

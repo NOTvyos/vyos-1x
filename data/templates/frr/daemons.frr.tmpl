@@ -30,13 +30,13 @@ isisd=yes
 pimd=no
 pim6d=yes
 ldpd=yes
-nhrpd=no
+nhrpd=yes
 eigrpd=no
 babeld=yes
 sharpd=no
 pbrd=no
 bfdd=yes
-fabricd=no
+fabricd=yes
 vrrpd=no
 pathd=no
 
@@ -106,7 +106,7 @@ valgrind_enable=no
 
 #watchfrr_options=""
 
-frr_profile="traditional"
+frr_profile="{{ profile }}"
 
 MAX_FDS={{ descriptors }}
 

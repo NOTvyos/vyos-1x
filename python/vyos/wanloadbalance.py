@@ -65,7 +65,46 @@ def nft_rule(rule_conf, rule_id, local=False, exclude=False, limit=False, weight
             if port[:1] == '!':
                 operator = '!='
                 port = port[1:]
-            output.append(f'th {prefix}port {operator} {port}')
+            output.append(f'th {prefix}port {operator} {{ {port} }}')
+
+        if 'group' in direction_conf:
+                group = direction_conf['group']
+                if 'address_group' in group:
+                    group_name = group['address_group']
+                    operator = ''
+                    exclude = group_name[0] == "!"
+                    if exclude:
+                        operator = '!='
+                        group_name = group_name[1:]
+                    output.append(f'ip {prefix}addr {operator} @A_{group_name}')
+                if 'network_group' in group:
+                    group_name = group['network_group']
+                    operator = ''
+                    if group_name[0] == "!":
+                        operator = '!='
+                        group_name = group_name[1:]
+                    output.append(f'ip {prefix}addr {operator} @N_{group_name}')
+                # Generate firewall group domain-group
+                if 'domain_group' in group:
+                    group_name = group['domain_group']
+                    operator = ''
+                    if group_name[0] == '!':
+                        operator = '!='
+                        group_name = group_name[1:]
+                    output.append(f'ip {prefix}addr {operator} @D_{group_name}')
+                if 'port_group' in group:
+                    proto = rule_conf['protocol']
+                    group_name = group['port_group']
+
+                    if proto == 'tcp_udp':
+                        proto = 'th'
+
+                    operator = ''
+                    if group_name[0] == '!':
+                        operator = '!='
+                        group_name = group_name[1:]
+
+                    output.append(f'{proto} {prefix}port {operator} @P_{group_name}')
 
     if 'source_based_routing' not in rule_conf and not restore_mark:
         output.append('ct state new')
@@ -115,7 +154,7 @@ def wlb_weight_interfaces(rule_conf, health_state):
     for ifname, weight in sorted(interfaces, key=lambda i: i[1]): # build weight ranges
         end = start + weight - 1
         out.append((ifname, f'{start}-{end}' if end > start else start))
-        start = weight
+        start += weight
 
     return out, total_weight
 

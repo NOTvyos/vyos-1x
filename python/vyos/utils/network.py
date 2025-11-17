@@ -13,9 +13,12 @@
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library.  If not, see <http://www.gnu.org/licenses/>.
 
+import hashlib
+from socket import AF_INET
+from socket import AF_INET6
+from vyos.utils.process import cmd
+
 def _are_same_ip(one, two):
-    from socket import AF_INET
-    from socket import AF_INET6
     from socket import inet_pton
     from vyos.template import is_ipv4
     # compare the binary representation of the IP
@@ -46,6 +49,62 @@ def is_netns_interface(interface, netns):
     if rc == 0:
         return True
     return False
+
+def get_host_identity() -> str:
+    """
+    Build a stable host identity string for deterministic MAC generation.
+
+    Combines:
+      • The system's hardware UUID (from /sys/class/dmi/id/product_uuid),
+        if available
+      • The system hostname
+
+    Both are normalized (lowercase, dashes removed in UUID) and joined with a colon.
+
+    Returns:
+        str: A string "<uuid>:<hostname>", used as part of the host-specific seed when
+             generating deterministic MAC addresses.
+    """
+    import os.path
+
+    uuid_file = '/sys/class/dmi/id/product_uuid'
+
+    if os.path.exists(uuid_file):
+        uuid = cmd(f"sudo cat {uuid_file}").strip().replace("-", "").lower()
+    else:
+        uuid = None
+
+    host = cmd("hostname").strip().lower()
+
+    if uuid is not None:
+        return f"{uuid}:{host}"
+    else:
+        return host
+
+def gen_mac(name: str, addr: str, ident: str) -> str:
+    """
+    Generate a deterministic locally-administered MAC address.
+
+    The MAC is derived from:
+      • Host identity (UUID + hostname)
+      • Container name
+      • Concatenated address string (IPv4 and/or IPv6 addresses)
+
+    A SHA-256 digest is computed from the combined string. The first 5 bytes
+    of the digest are used, prefixed with 0x02 to mark the address as
+    locally-administered and unicast.
+
+    Args:
+        name (str): Container name to differentiate MACs.
+        addr (str): Concatenated list of container addresses (IPv4/IPv6).
+
+    Returns:
+        str: Deterministic MAC address in standard "xx:xx:xx:xx:xx:xx" format.
+    """
+    h = hashlib.sha256(f"{ident}:{name}:{addr}".encode()).hexdigest()
+    # 0x02 = locally-administered, unicast
+    b = [0x02] + [int(h[i:i+2], 16) for i in range(0, 10, 2)]  # 5 bytes = 40 bits
+    return ":".join(f"{x:02x}" for x in b)
 
 def get_netns_all() -> list:
     from json import loads
@@ -80,7 +139,10 @@ def get_interface_vrf(interface):
     """ Returns VRF of given interface """
     from vyos.utils.dict import dict_search
     from vyos.utils.network import get_interface_config
-    tmp = get_interface_config(interface)
+    if isinstance(interface, str):
+        tmp = get_interface_config(interface)
+    elif isinstance(interface, dict):
+        tmp = interface
     if dict_search('linkinfo.info_slave_kind', tmp) == 'vrf':
         return tmp['master']
     return 'default'
@@ -347,7 +409,7 @@ def is_ipv6_link_local(addr):
 
 def is_addr_assigned(ip_address, vrf=None, return_ifname=False, include_vrf=False) -> bool | str:
     """ Verify if the given IPv4/IPv6 address is assigned to any interface """
-    from netifaces import interfaces
+    from netifaces import interfaces # pylint: disable = no-name-in-module
     from vyos.utils.network import get_interface_config
     from vyos.utils.dict import dict_search
 
@@ -445,10 +507,8 @@ def is_subnet_connected(subnet, primary=False):
     from ipaddress import ip_address
     from ipaddress import ip_network
 
-    from netifaces import ifaddresses
-    from netifaces import interfaces
-    from netifaces import AF_INET
-    from netifaces import AF_INET6
+    from netifaces import ifaddresses # pylint: disable = no-name-in-module
+    from netifaces import interfaces # pylint: disable = no-name-in-module
 
     from vyos.template import is_ipv6
 
@@ -482,9 +542,7 @@ def is_subnet_connected(subnet, primary=False):
 def is_afi_configured(interface: str, afi):
     """ Check if given address family is configured, or in other words - an IP
     address is assigned to the interface. """
-    from netifaces import ifaddresses
-    from netifaces import AF_INET
-    from netifaces import AF_INET6
+    from netifaces import ifaddresses # pylint: disable = no-name-in-module
 
     if afi not in [AF_INET, AF_INET6]:
         raise ValueError('Address family must be in [AF_INET, AF_INET6]')

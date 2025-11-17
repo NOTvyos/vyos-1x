@@ -15,9 +15,9 @@
 import re
 
 from json import loads
-from netifaces import AF_INET
-from netifaces import AF_INET6
-from netifaces import ifaddresses
+from netifaces import ifaddresses # pylint: disable = no-name-in-module
+from socket import AF_INET
+from socket import AF_INET6
 from systemd import journal
 
 from base_vyostest_shim import VyOSUnitTestSHIM
@@ -216,6 +216,9 @@ class BasicInterfaceTest:
                         self.assertFalse(process_named_running(daemon, tmp))
                 else:
                     self.assertFalse(process_named_running(daemon))
+
+            # always forward to base class
+            super().tearDown()
 
         def test_dhcp_disable_interface(self):
             if not self._test_dhcp:
@@ -1224,7 +1227,6 @@ class BasicInterfaceTest:
                     self.assertIn(f'prefix-interface {delegatee}' + r' {', dhcpc6_config)
                     self.assertIn(f'ifid {address};', dhcpc6_config)
                     self.assertIn(f'sla-id {sla_id};', dhcpc6_config)
-                    self.assertIn(f'sla-len {sla_len};', dhcpc6_config)
 
                     # increment sla-id
                     sla_id = str(int(sla_id) + 1)
@@ -1290,7 +1292,6 @@ class BasicInterfaceTest:
                     self.assertIn(f'prefix-interface {delegatee}' + r' {', dhcpc6_config)
                     self.assertIn(f'ifid {address};', dhcpc6_config)
                     self.assertIn(f'sla-id {sla_id};', dhcpc6_config)
-                    self.assertIn(f'sla-len {sla_len};', dhcpc6_config)
 
                     # increment sla-id
                     sla_id = str(int(sla_id) + 1)

@@ -22,10 +22,10 @@ from base_vyostest_shim import VyOSUnitTestSHIM
 
 from vyos.configsession import ConfigSessionError
 from vyos.ifconfig import Section
+from vyos.ifconfig import Interface
 from vyos.utils.process import cmd
 
 base_path = ['qos']
-
 
 def get_tc_qdisc_json(interface, all=False) -> dict:
     tmp = cmd(f'tc -detail -json qdisc show dev {interface}')
@@ -85,6 +85,8 @@ class TestQoS(VyOSUnitTestSHIM.TestCase):
         # delete testing SSH config
         self.cli_delete(base_path)
         self.cli_commit()
+        # always forward to base class
+        super().tearDown()
 
     def test_01_cake(self):
         bandwidth = 1000000
@@ -947,6 +949,30 @@ class TestQoS(VyOSUnitTestSHIM.TestCase):
             tmp[1]['options'],
         )
 
+    def test_23_policy_limiter_iif_filter(self):
+        policy_name = 'smoke_test'
+        base_policy_path = ['qos', 'policy', 'limiter', policy_name]
+
+        self.cli_set(['qos', 'interface', self._interfaces[0], 'ingress', policy_name])
+        self.cli_set(base_policy_path + ['class', '100', 'bandwidth', '20gbit'])
+        self.cli_set(base_policy_path + ['class', '100', 'burst', '3760k'])
+        self.cli_set(base_policy_path + ['class', '100', 'match', 'test', 'interface', self._interfaces[0]])
+        self.cli_set(base_policy_path + ['class', '100', 'priority', '20'])
+        self.cli_set(base_policy_path + ['default', 'bandwidth', '1gbit'])
+        self.cli_set(base_policy_path + ['default', 'burst', '125000000b'])
+        self.cli_commit()
+
+        iif = Interface(self._interfaces[0]).get_ifindex()
+        tc_filters = cmd(f'tc filter show dev {self._interfaces[0]} ingress')
+
+        # class 100
+        self.assertIn('filter parent ffff: protocol all pref 20 basic chain 0', tc_filters)
+        self.assertIn(f'meta(rt_iif eq {iif})', tc_filters)
+        self.assertIn('action order 1:  police 0x1 rate 20Gbit burst 3760Kb mtu 2Kb action drop overhead 0b', tc_filters)
+        # default
+        self.assertIn('filter parent ffff: protocol all pref 255 basic chain 0', tc_filters)
+        self.assertIn('action order 1:  police 0x2 rate 1Gbit burst 125000000b mtu 2Kb action drop overhead 0b', tc_filters)
+
     def test_24_policy_shaper_match_ether(self):
         interface = self._interfaces[0]
         bandwidth = 250
@@ -1013,6 +1039,5 @@ class TestQoS(VyOSUnitTestSHIM.TestCase):
                 self.assertIn(f'filter parent 1: protocol {proto} pref',
                               get_tc_filter_details(interface))
 
-
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=2, failfast=VyOSUnitTestSHIM.TestCase.debug_on())

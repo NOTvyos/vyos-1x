@@ -18,6 +18,7 @@ import os
 import unittest
 
 from base_interfaces_test import BasicInterfaceTest
+from base_vyostest_shim import VyOSUnitTestSHIM
 
 from vyos.ifconfig import Section
 from vyos.ifconfig.interface import Interface
@@ -61,6 +62,23 @@ class BondingInterfaceTest(BasicInterfaceTest.TestCase):
         for interface in self._interfaces:
             slaves = read_file(f'/sys/class/net/{interface}/bonding/slaves').split()
             self.assertListEqual(slaves, self._members)
+
+    def test_bonding_keep_mac(self):
+        # T7571: A bond interface should always run from the physical interfaces
+        # MAC address and not a synthetic one.
+        base_mac = Interface(self._members[0]).get_mac()
+
+        # configure member interfaces
+        for interface in self._interfaces:
+            for option in self._options.get(interface, []):
+                self.cli_set(self._base_path + [interface] + option.split())
+
+        self.cli_commit()
+
+        # Verify bond interface MAC address matches the address of it's first member
+        for interface in self._interfaces:
+            mac = Interface(interface).get_mac()
+            self.assertEqual(mac, base_mac)
 
     def test_bonding_remove_member(self):
         # T2515: when removing a bond member the previously enslaved/member
@@ -293,7 +311,7 @@ class BondingInterfaceTest(BasicInterfaceTest.TestCase):
 
         id = '5'
         for interface in self._interfaces:
-            frrconfig = self.getFRRconfig(f'interface {interface}', daemon='zebra')
+            frrconfig = self.getFRRconfig(f'interface {interface}', stop_section='^exit')
 
             self.assertIn(f' evpn mh es-id {id}', frrconfig)
             self.assertIn(f' evpn mh es-df-pref {id}', frrconfig)
@@ -310,11 +328,11 @@ class BondingInterfaceTest(BasicInterfaceTest.TestCase):
 
         id = '5'
         for interface in self._interfaces:
-            frrconfig = self.getFRRconfig(f'interface {interface}', daemon='zebra')
+            frrconfig = self.getFRRconfig(f'interface {interface}', stop_section='^exit')
             self.assertIn(f' evpn mh es-sys-mac 00:12:34:56:78:0{id}', frrconfig)
             self.assertIn(f' evpn mh uplink', frrconfig)
 
             id = int(id) + 1
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=2, failfast=VyOSUnitTestSHIM.TestCase.debug_on())

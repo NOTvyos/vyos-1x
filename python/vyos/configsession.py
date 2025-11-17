@@ -46,8 +46,7 @@ INSTALL_IMAGE = [
 IMPORT_PKI = ['/opt/vyatta/bin/vyatta-op-cmd-wrapper', 'import']
 IMPORT_PKI_NO_PROMPT = [
     '/usr/libexec/vyos/op_mode/pki.py',
-    '--action',
-    'import',
+    'import_pki',
     '--no-prompt',
 ]
 REMOVE_IMAGE = [
@@ -138,7 +137,7 @@ class ConfigSession(object):
     The write API of VyOS.
     """
 
-    def __init__(self, session_id, app=APP):
+    def __init__(self, session_id, app=APP, shared=False):
         """
          Creates a new config session.
 
@@ -171,7 +170,11 @@ class ConfigSession(object):
 
         self.__run_command([CLI_SHELL_API, 'setupSession'])
 
+        self.shared = shared
+
     def __del__(self):
+        if self.shared:
+            return
         try:
             output = (
                 subprocess.check_output(

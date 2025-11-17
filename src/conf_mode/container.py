@@ -29,12 +29,17 @@ from vyos.configdict import dict_merge
 from vyos.configdict import node_changed
 from vyos.configdict import is_node_changed
 from vyos.configverify import verify_vrf
-from vyos.ifconfig import Interface
+from vyos.container import restart_network
+from vyos.utils.configfs import delete_cli_node
+from vyos.utils.configfs import add_cli_node
 from vyos.utils.cpu import get_core_count
 from vyos.utils.file import write_file
+from vyos.utils.dict import dict_search
 from vyos.utils.process import call
 from vyos.utils.process import cmd
 from vyos.utils.process import run
+from vyos.utils.network import gen_mac
+from vyos.utils.network import get_host_identity
 from vyos.utils.network import interface_exists
 from vyos.template import bracketize_ipv6
 from vyos.template import inc_ip
@@ -114,6 +119,10 @@ def verify(container):
 
     # Add new container
     if 'name' in container:
+        net_dict = {}
+        net_dict['mac'] = {}
+        net_dict['address'] = {}
+
         for name, container_config in container['name'].items():
             # Container image is a mandatory option
             if 'image' not in container_config:
@@ -149,6 +158,16 @@ def verify(container):
                 if network_name not in container.get('network', {}):
                     raise ConfigError(f'Container network "{network_name}" does not exist!')
 
+                if 'name_server' in container_config and 'no_name_server' not in container['network'][network_name]:
+                    raise ConfigError(f'Setting name server has no effect when attached container network has DNS enabled!')
+
+                mac = dict_search(f'network.{network_name}.mac', container_config)
+                if mac:
+                    if mac in net_dict['mac'].keys():
+                        raise ConfigError(f'MAC address "{mac}" is already used by container "{net_dict["mac"][mac]}"!')
+                    if mac != 'auto':
+                        net_dict['mac'][mac] = name
+
                 if 'address' in container_config['network'][network_name]:
                     cnt_ipv4 = 0
                     cnt_ipv6 = 0
@@ -175,6 +194,10 @@ def verify(container):
                         if ip_address(address) == ip_network(network)[1]:
                             raise ConfigError(f'IP address "{address}" can not be used for a container, ' \
                                               'reserved for the container engine!')
+
+                        if address in net_dict['address'].keys():
+                            raise ConfigError(f'IP address "{address}" is already used by container "{net_dict["address"][address]}"!')
+                        net_dict['address'][address] = name
 
                     if cnt_ipv4 > 1 or cnt_ipv6 > 1:
                         raise ConfigError(f'Only one IP address per address family can be used for ' \
@@ -257,22 +280,59 @@ def verify(container):
     # Add new network
     if 'network' in container:
         for network, network_config in container['network'].items():
-            v4_prefix = 0
-            v6_prefix = 0
+            net_dict = {'ipv4_pfx_len': 0, 'ipv6_pfx_len': 0, 'ipv4_gateway_len': 0, 'ipv6_gateway_len': 0}
+
             # If ipv4-prefix not defined for user-defined network
             if 'prefix' not in network_config:
                 raise ConfigError(f'prefix for network "{network}" must be defined!')
 
             for prefix in network_config['prefix']:
                 if is_ipv4(prefix):
-                    v4_prefix += 1
+                    net_dict['ipv4_pfx_len'] += 1
+                    net_dict['ipv4_prefix'] = prefix
                 elif is_ipv6(prefix):
-                    v6_prefix += 1
+                    net_dict['ipv6_pfx_len'] += 1
+                    net_dict['ipv6_prefix'] = prefix
 
-            if v4_prefix > 1:
+            for gateway in network_config.get('gateway', []):
+                if is_ipv4(gateway):
+                    net_dict['ipv4_gateway_len'] += 1
+                    net_dict['ipv4_gateway'] = gateway
+                elif is_ipv6(gateway):
+                    net_dict['ipv6_gateway_len'] += 1
+                    net_dict['ipv6_gateway'] = gateway
+
+            if net_dict['ipv4_pfx_len'] > 1:
                 raise ConfigError(f'Only one IPv4 prefix can be defined for network "{network}"!')
-            if v6_prefix > 1:
+            if net_dict['ipv6_pfx_len'] > 1:
                 raise ConfigError(f'Only one IPv6 prefix can be defined for network "{network}"!')
+            if net_dict['ipv4_gateway_len'] > 1:
+                raise ConfigError(f'Only one IPv4 gateway can be defined for network "{network}"!')
+            if net_dict['ipv6_gateway_len'] > 1:
+                raise ConfigError(f'Only one IPv6 gateway can be defined for network "{network}"!')
+
+            if net_dict.get('ipv4_prefix') and net_dict.get('ipv4_gateway'):
+                if ip_address(net_dict['ipv4_gateway']) not in ip_network(net_dict['ipv4_prefix']):
+                    raise ConfigError(f'IPv4 gateway "{net_dict["ipv4_gateway"]}" is not in the IPv4 prefix "{net_dict["ipv4_prefix"]}"!')
+            if net_dict.get('ipv6_prefix') and net_dict.get('ipv6_gateway'):
+                if ip_address(net_dict['ipv6_gateway']) not in ip_network(net_dict['ipv6_prefix']):
+                    raise ConfigError(f'IPv6 gateway "{net_dict["ipv6_gateway"]}" is not in the IPv6 prefix "{net_dict["ipv6_prefix"]}"!')
+            if net_dict.get('ipv4_gateway') and not net_dict.get('ipv4_prefix'):
+                raise ConfigError(f'IPv4 gateway configured but no IPv4 prefix defined for network "{network}"!')
+            if net_dict.get('ipv6_gateway') and not net_dict.get('ipv6_prefix'):
+                raise ConfigError(f'IPv6 gateway configured but no IPv6 prefix defined for network "{network}"!')
+
+            type_config = dict_search('type', network_config)
+            if dict_search('macvlan', type_config):
+                parent = dict_search('macvlan.parent', type_config)
+                if not parent:
+                    raise ConfigError(f'MACVLAN networks must have a parent interface!')
+                if not interface_exists(parent):
+                    raise ConfigError(f'MACVLAN parent interface "{parent}" does not exist!')
+                if not dict_search('macvlan.mode', type_config):
+                    raise ConfigError(f'MACVLAN networks must have a mode configured!')
+                if dict_search('vrf', network_config):
+                    raise ConfigError(f'MACVLAN networks do not support direct VRF assignment!')
 
             # Verify VRF exists
             verify_vrf(network_config)
@@ -301,7 +361,7 @@ def verify(container):
     return None
 
 
-def generate_run_arguments(name, container_config):
+def generate_run_arguments(name, container_config, host_ident):
     image = container_config['image']
     cpu_quota = container_config['cpu_quota']
     memory = container_config['memory']
@@ -400,10 +460,14 @@ def generate_run_arguments(name, container_config):
     if 'allow_host_pid' in container_config:
       host_pid = '--pid host'
 
-    name_server = ''
+    name_server = []
     if 'name_server' in container_config:
         for ns in container_config['name_server']:
-            name_server += f'--dns {ns}'
+            name_server.append(f'--dns {ns}')
+    if name_server:
+        name_server = ' '.join(name_server)
+    else:
+        name_server = ''
 
     container_base_cmd = f'--detach --interactive --tty --replace {capabilities} {privileged} --cpus {cpu_quota} {sysctl_opt} ' \
                          f'--memory {memory}m --shm-size {shared_memory}m --memory-swap 0 --restart {restart} --log-driver={log_driver} ' \
@@ -427,8 +491,10 @@ def generate_run_arguments(name, container_config):
         return f'{container_base_cmd} --net host {entrypoint} {image} {command} {command_arguments}'.strip()
 
     ip_param = ''
+    addr_info = ''
     networks = ",".join(container_config['network'])
     for network in container_config['network']:
+        network_name = network
         if 'address' not in container_config['network'][network]:
             continue
         for address in container_config['network'][network]['address']:
@@ -437,7 +503,24 @@ def generate_run_arguments(name, container_config):
             else:
                 ip_param += f' --ip {address}'
 
-    return f'{container_base_cmd} --no-healthcheck --net {networks} {ip_param} {entrypoint} {image} {command} {command_arguments}'.strip()
+        addr_info = ''.join(container_config['network'][network]['address'])
+
+    get_mac = dict_search(f'network.{network_name}.mac', container_config)
+    if get_mac == 'auto' or get_mac is None:
+        mac_add = gen_mac(name, addr_info, host_ident)
+    else:
+        mac_add = get_mac
+
+    mac_address = f'--mac-address {mac_add}'
+
+    # Replace mac-auto with the generated mac address
+    if get_mac == 'auto':
+        mac_config_path = ['container', 'name', name, 'network', network_name, 'mac']
+
+        delete_cli_node(mac_config_path)
+        add_cli_node(mac_config_path, value=mac_add)
+
+    return f'{container_base_cmd} --no-healthcheck --net {networks} {ip_param} {mac_address} {entrypoint} {image} {command} {command_arguments}'.strip()
 
 
 def generate(container):
@@ -450,29 +533,62 @@ def generate(container):
 
     if 'network' in container:
         for network, network_config in container['network'].items():
+            type_config = dict_search('type', network_config)
+            if dict_search('macvlan', type_config):
+                net_interface = dict_search('macvlan.parent', type_config)
+                driver = 'macvlan'
+                mode = dict_search('macvlan.mode', type_config)
+            elif dict_search('bridge', type_config) is not None:
+                net_interface = f'pod-{network}'
+                driver = 'bridge'
+            else:
+                net_interface = f'pod-{network}'
+                driver = 'bridge'
             tmp = {
                 'name': network,
                 'id': sha256(f'{network}'.encode()).hexdigest(),
-                'driver': 'bridge',
-                'network_interface': f'pod-{network}',
+                'driver': driver,
+                'network_interface': net_interface,
                 'subnets': [],
                 'ipv6_enabled': False,
                 'internal': False,
                 'dns_enabled': True,
                 'ipam_options': {
                     'driver': 'host-local'
+                },
+                'options': {
+                    **({'mode': mode} if driver == 'macvlan' else {}),
+                    'mtu': '1500'
                 }
             }
 
             if 'no_name_server' in network_config:
                 tmp['dns_enabled'] = False
 
+            if 'mtu' in network_config:
+                tmp['options']['mtu'] = network_config['mtu']
+
             for prefix in network_config['prefix']:
-                net = {'subnet': prefix, 'gateway': inc_ip(prefix, 1)}
-                tmp['subnets'].append(net)
+                gateway4, gateway6 = None, None
+                if dict_search('gateway', network_config):
+                    for gw in network_config['gateway']:
+                        if is_ipv6(gw):
+                            gateway6 = gw
+                        else:
+                            gateway4 = gw
+
+                if is_ipv6(prefix) and not gateway6:
+                    gateway6 = inc_ip(prefix, 1)
+                elif not gateway4:
+                    gateway4 = inc_ip(prefix, 1)
 
                 if is_ipv6(prefix):
                     tmp['ipv6_enabled'] = True
+                    net = {'subnet': prefix, 'gateway': gateway6}
+                else:
+                    net = {'subnet': prefix, 'gateway': gateway4}
+
+                tmp['subnets'].append(net)
 
             write_file(f'/etc/containers/networks/{network}.json', json_write(tmp, indent=2))
 
@@ -481,12 +597,13 @@ def generate(container):
     render(config_storage, 'container/storage.conf.j2', container)
 
     if 'name' in container:
+        host_ident = get_host_identity()
         for name, container_config in container['name'].items():
             if 'disable' in container_config:
                 continue
 
             file_path = os.path.join(systemd_unit_path, f'vyos-container-{name}.service')
-            run_args = generate_run_arguments(name, container_config)
+            run_args = generate_run_arguments(name, container_config, host_ident)
             render(file_path, 'container/systemd-unit.j2', {'name': name, 'run_args': run_args, },
                    formater=lambda _: _.replace("&quot;", '"').replace("&apos;", "'"))
 
@@ -538,21 +655,8 @@ def apply(container):
     if disabled_new:
         call('systemctl daemon-reload')
 
-    # Start network and assign it to given VRF if requested. this can only be done
-    # after the containers got started as the podman network interface will
-    # only be enabled by the first container and yet I do not know how to enable
-    # the network interface in advance
-    if 'network' in container:
-        for network, network_config in container['network'].items():
-            network_name = f'pod-{network}'
-            # T5147: Networks are started only as soon as there is a consumer.
-            # If only a network is created in the first place, no need to assign
-            # it to a VRF as there's no consumer, yet.
-            if interface_exists(network_name):
-                tmp = Interface(network_name)
-                tmp.set_vrf(network_config.get('vrf', ''))
-                tmp.add_ipv6_eui64_address('fe80::/64')
-
+    # Re-Start network and assign it to given VRF if requested.
+    restart_network(container)
     return None
 
 

@@ -52,7 +52,7 @@ Pre-Depends:
   libnss-tacplus [amd64],
   libpam-tacplus [amd64],
   libpam-radius-auth,
-  vyos-libnss-mapuser,
+  libnss-mapuser,
   tzdata (>= 2025b)
 Depends:
 ## Fundamentals

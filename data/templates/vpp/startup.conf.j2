@@ -6,6 +6,7 @@ unix {
     full-coredump
     cli-listen /run/vpp/cli.sock
     gid vpp
+    systemd-notify
     # exec /etc/vpp/bootstrap.vpp
 {% if unix is vyos_defined %}
 {%     if unix.poll_sleep_usec is vyos_defined %}
@@ -83,7 +84,6 @@ physmem {
 
 plugins {
     plugin default { disable }
-    plugin af_xdp_plugin.so { enable }
     plugin avf_plugin.so { enable }
     plugin dpdk_plugin.so { enable }
     plugin vmxnet3_plugin.so { enable }
@@ -91,6 +91,8 @@ plugins {
     plugin linux_cp_plugin.so { enable }
     plugin linux_nl_plugin.so { enable }
     plugin pppoe_plugin.so { enable }
+    # Flow
+    plugin flowprobe_plugin.so { enable }
     plugin sflow_plugin.so { enable }
     # NAT uncomment if needed
     # plugin cnat_plugin.so { enable }
@@ -111,6 +113,8 @@ plugins {
     # plugin wireguard_plugin.so { enable }
     # ACL
     plugin acl_plugin.so { enable }
+    # DHCP plugin
+    plugin dhcp_plugin.so { enable }
 }
 
 
@@ -164,6 +168,9 @@ memory {
 {%     endif %}
 {%     if memory.main_heap_page_size is vyos_defined %}
     main-heap-page-size {{ memory.main_heap_page_size }}
+{%     endif %}
+{%     if buffers.page_size != '4K' %}
+    default-hugepage-size {{ buffers.page_size }}
 {%     endif %}
 }
 {% endif %}

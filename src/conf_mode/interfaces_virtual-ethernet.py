@@ -19,12 +19,15 @@ from sys import exit
 from vyos import ConfigError
 from vyos import airbag
 from vyos.config import Config
+from vyos.configdep import set_dependents
+from vyos.configdep import call_dependents
 from vyos.configdict import get_interface_dict
 from vyos.configverify import verify_address
 from vyos.configverify import verify_bridge_delete
 from vyos.configverify import verify_vrf
 from vyos.configverify import verify_mtu_ipv6
 from vyos.ifconfig import VethIf
+from vyos.utils.dict import dict_search
 from vyos.utils.network import interface_exists
 airbag.enable()
 
@@ -46,6 +49,10 @@ def get_config(config=None):
     # interfaces configrued on the CLI so we can assign proper IP addresses etc.
     veth['other_interfaces'] = conf.get_config_dict(base, key_mangling=('-', '_'),
                                      get_first_key=True, no_tag_node_value_mangle=True)
+
+    # Protocols static arp dependency
+    if 'static_arp' in veth:
+        set_dependents('static_arp', conf)
 
     return veth
 
@@ -76,7 +83,7 @@ def verify(veth):
         raise ConfigError(f'Used peer-name "{peer_name}" on interface "{ifname}" ' \
                           'is not configured!')
 
-    if veth['other_interfaces'][peer_name]['peer_name'] != ifname:
+    if dict_search(f'other_interfaces.{peer_name}.peer_name', veth) != ifname:
         raise ConfigError(
             f'Configuration mismatch between "{ifname}" and "{peer_name}"!')
 
@@ -100,6 +107,9 @@ def apply(veth):
     if 'deleted' not in veth:
         p = VethIf(**veth)
         p.update(veth)
+
+    if 'static_arp' in veth:
+        call_dependents()
 
     return None
 

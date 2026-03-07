@@ -19,12 +19,11 @@ import paramiko
 import re
 import unittest
 
-from pwd import getpwall
-
 from base_vyostest_shim import VyOSUnitTestSHIM
 
 from vyos.configsession import ConfigSessionError
 from vyos.defaults import config_files
+from vyos.utils.auth import get_local_passwd_entries
 from vyos.utils.process import cmd
 from vyos.utils.process import is_systemd_service_running
 from vyos.utils.process import process_named_running
@@ -311,7 +310,7 @@ class TestServiceSSH(VyOSUnitTestSHIM.TestCase):
         self.cli_commit()
 
         # After deletion the test user is not allowed to remain in /etc/passwd
-        usernames = [x[0] for x in getpwall()]
+        usernames = [x.pw_name for x in get_local_passwd_entries()]
         self.assertNotIn(test_user, usernames)
 
     def test_ssh_dynamic_protection(self):
@@ -378,7 +377,7 @@ class TestServiceSSH(VyOSUnitTestSHIM.TestCase):
         rekey_data = '1024'
 
         for cipher in ciphers:
-            self.cli_set(base_path + ['ciphers', cipher])
+            self.cli_set(base_path + ['cipher', cipher])
         for host_key in host_key_algs:
             self.cli_set(base_path + ['hostkey-algorithm', host_key])
         for kex in kexes:
@@ -494,6 +493,23 @@ class TestServiceSSH(VyOSUnitTestSHIM.TestCase):
         authorize_principals_file_config = get_config_value('AuthorizedPrincipalsFile')
         self.assertNotIn('none', authorize_principals_file_config)
         self.assertFalse(os.path.exists(f'/home/{test_user}/.ssh/authorized_principals'))
+
+    def test_ssh_fido(self):
+        # Order does matter for this test because of how the template
+        # collects and maps the options.
+        opt_map = {
+            'pin-required': 'verify-required',
+            'touch-required': 'touch-required',
+        }
+        expected = 'PubkeyAuthOptions '
+        for k, v in opt_map.items():
+            self.cli_set(base_path + ['fido', k])
+            expected = f'{expected}{v} '
+        expected = expected[:-1]
+        self.cli_commit()
+        tmp_sshd_conf = read_file(SSHD_CONF)
+        self.assertIn(expected, tmp_sshd_conf)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2, failfast=VyOSUnitTestSHIM.TestCase.debug_on())

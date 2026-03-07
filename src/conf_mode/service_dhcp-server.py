@@ -15,6 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import os
+import re
 
 from sys import exit
 from sys import argv
@@ -31,6 +32,7 @@ from vyos.pki import wrap_private_key
 from vyos.template import render
 from vyos.utils.dict import dict_search
 from vyos.utils.dict import dict_search_args
+from vyos.utils.dict import dict_search_recursive
 from vyos.utils.file import chmod_775
 from vyos.utils.file import makedir
 from vyos.utils.file import write_file
@@ -216,6 +218,9 @@ def get_config(config=None):
         if dict_search('high_availability.certificate', dhcp):
             dhcp['pki'] = conf.get_config_dict(['pki'], key_mangling=('-', '_'), get_first_key=True, no_tag_node_value_mangle=True)
 
+    if bool(list(dict_search_recursive(dhcp, 'ping_check'))):
+        dhcp['any_ping_check'] = True
+
     return dhcp
 
 def verify_ddns_domain_servers(domain_type, domain):
@@ -270,12 +275,24 @@ def verify(dhcp):
                     if 'next_hop' not in route_option:
                         raise ConfigError(f'DHCP static-route "{route}" requires router to be defined!')
 
+            # If a client class has been specified then it must exist
+            if 'client_class' in subnet_config:
+                client_class = subnet_config['client_class']
+                if client_class not in dhcp.get('client_class', {}):
+                    raise ConfigError(f'Client class "{client_class}" set in subnet "{subnet}" but does not exist')
+
             # Check if DHCP address range is inside configured subnet declaration
             if 'range' in subnet_config:
                 networks = []
                 for range, range_config in subnet_config['range'].items():
                     if not {'start', 'stop'} <= set(range_config):
                         raise ConfigError(f'DHCP range "{range}" start and stop address must be defined!')
+
+                    # If a client class has been specified then it must exist
+                    if 'client_class' in range_config:
+                        client_class = range_config['client_class']
+                        if client_class not in dhcp.get('client_class', {}):
+                            raise ConfigError(f'Client class "{client_class}" set in range "{range}" but does not exist')
 
                     # Start/Stop address must be inside network
                     for key in ['start', 'stop']:
@@ -429,6 +446,26 @@ def verify(dhcp):
 
         if 'reverse_domain' in ddns:
             verify_ddns_domain_servers('Reverse', ddns['reverse_domain'])
+
+    if 'client_class' in dhcp:
+        # Check client class values are valid
+        for class_name, class_config in dhcp['client_class'].items():
+            if 'relay_agent_information' in class_config:
+                relay_agent_information_config = class_config['relay_agent_information']
+                # Compile a regex that will scan for valid inputs. Input can be
+                # either hex in the form 0x0123456789ABCDEF or a string that
+                # does *not* start with 0x. i.e. 0xHELLOWORLD is bad
+                pattern = re.compile(r'^(?:0x[0-9A-Fa-f]+|(?!0x).+)$')
+
+                if 'circuit_id' in relay_agent_information_config:
+                    circuit_id = relay_agent_information_config['circuit_id']
+                    if not pattern.match(circuit_id):
+                        raise ConfigError(f'Invalid circuit-id "{circuit_id}" must be either text literal or hex string starting with 0x')
+
+                if 'remote_id' in relay_agent_information_config:
+                    remote_id = relay_agent_information_config['remote_id']
+                    if not pattern.match(remote_id):
+                        raise ConfigError(f'Invalid remote-id "{remote_id}" must be either text literal or hex string starting with 0x')
 
     return None
 

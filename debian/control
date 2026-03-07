@@ -51,8 +51,8 @@ Pre-Depends:
   libpam-runtime [amd64],
   libnss-tacplus [amd64],
   libpam-tacplus [amd64],
-  libpam-radius-auth,
-  libnss-mapuser,
+  vyos-libpam-radius-auth,
+  vyos-libnss-mapuser,
   tzdata (>= 2025b)
 Depends:
 ## Fundamentals
@@ -89,6 +89,7 @@ Depends:
   python3-pystache,
   python3-pyudev,
   python3-six,
+  python3-systemd,
   python3-tabulate,
   python3-voluptuous,
   python3-xmltodict,
@@ -105,6 +106,8 @@ Depends:
   file,
   iproute2 (>= 6.0.0),
   linux-cpupower,
+  hwloc,
+  kexec-tools,
 # ipaddrcheck is widely used in IP value validators
   ipaddrcheck,
   ethtool,
@@ -312,6 +315,7 @@ Depends:
 # End "vpn openconnect"
 # For "system syslog"
   rsyslog,
+  rsyslog-openssl,
 # End "system syslog"
 # For "system option keyboard-layout"
   kbd,

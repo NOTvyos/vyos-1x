@@ -26,6 +26,7 @@ from vyos.utils.system import sysctl_read
 
 base_path = ['protocols', 'segment-routing']
 
+
 class TestProtocolsSegmentRouting(VyOSUnitTestSHIM.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -49,14 +50,64 @@ class TestProtocolsSegmentRouting(VyOSUnitTestSHIM.TestCase):
     def test_srv6(self):
         interfaces = Section.interfaces('ethernet', vlan=False)
         locators = {
-            'foo' : { 'prefix' : '2001:a::/64' },
-            'foo' : { 'prefix' : '2001:b::/64', 'usid' : {} },
+            'foo1': {'prefix': '2001:a::/64'},
+            'foo2': {'prefix': '2001:b::/64', 'usid': {}},
+            'foo3': {'prefix': '2001:c::/64', 'format': 'uncompressed-f4024'},
+            'foo4': {
+                'prefix': '2001:d::/48',
+                'block-len': '32',
+                'node-len': '16',
+                'func-bits': '12',
+                'usid': {},
+                'format': 'usid-f3216',
+            },
         }
 
         for locator, locator_config in locators.items():
-            self.cli_set(base_path + ['srv6', 'locator', locator, 'prefix', locator_config['prefix']])
+            self.cli_set(
+                base_path
+                + ['srv6', 'locator', locator, 'prefix', locator_config['prefix']]
+            )
+            if 'block-len' in locator_config:
+                self.cli_set(
+                    base_path
+                    + [
+                        'srv6',
+                        'locator',
+                        locator,
+                        'block-len',
+                        locator_config['block-len'],
+                    ]
+                )
+            if 'node-len' in locator_config:
+                self.cli_set(
+                    base_path
+                    + [
+                        'srv6',
+                        'locator',
+                        locator,
+                        'node-len',
+                        locator_config['node-len'],
+                    ]
+                )
+            if 'func-bits' in locator_config:
+                self.cli_set(
+                    base_path
+                    + [
+                        'srv6',
+                        'locator',
+                        locator,
+                        'func-bits',
+                        locator_config['func-bits'],
+                    ]
+                )
             if 'usid' in locator_config:
                 self.cli_set(base_path + ['srv6', 'locator', locator, 'behavior-usid'])
+            if 'format' in locator_config:
+                self.cli_set(
+                    base_path
+                    + ['srv6', 'locator', locator, 'format', locator_config['format']]
+                )
 
         # verify() - SRv6 should be enabled on at least one interface!
         with self.assertRaises(ConfigSessionError):
@@ -67,16 +118,45 @@ class TestProtocolsSegmentRouting(VyOSUnitTestSHIM.TestCase):
         self.cli_commit()
 
         for interface in interfaces:
-            self.assertEqual(sysctl_read(f'net.ipv6.conf.{interface}.seg6_enabled'), '1')
-            self.assertEqual(sysctl_read(f'net.ipv6.conf.{interface}.seg6_require_hmac'), '0') # default
+            self.assertEqual(
+                sysctl_read(f'net.ipv6.conf.{interface}.seg6_enabled'), '1'
+            )
+            self.assertEqual(
+                sysctl_read(f'net.ipv6.conf.{interface}.seg6_require_hmac'), '0'
+            )  # default
 
         frrconfig = self.getFRRconfig('segment-routing', stop_section='^exit')
         self.assertIn('segment-routing', frrconfig)
         self.assertIn(' srv6', frrconfig)
         self.assertIn('  locators', frrconfig)
         for locator, locator_config in locators.items():
+            prefix = locator_config['prefix']
+            block_len = (
+                f' block-len {locator_config["block-len"]}'
+                if 'block-len' in locator_config
+                else ''
+            )
+            node_len = (
+                f' node-len {locator_config["node-len"]}'
+                if 'node-len' in locator_config
+                else ''
+            )
+            func_bits = (
+                f' func-bits {locator_config["func-bits"]}'
+                if 'func-bits' in locator_config
+                else ''
+            )
+
             self.assertIn(f'   locator {locator}', frrconfig)
-            self.assertIn(f'    prefix {locator_config["prefix"]} block-len 40 node-len 24 func-bits 16', frrconfig)
+            self.assertIn(
+                f'    prefix {prefix}{block_len}{node_len}{func_bits}',
+                frrconfig,
+            )
+
+            if 'format' in locator_config:
+                self.assertIn(f'    format {locator_config["format"]}', frrconfig)
+            if 'usid' in locator_config:
+                self.assertIn('    behavior usid', frrconfig)
 
     def test_srv6_sysctl(self):
         interfaces = Section.interfaces('ethernet', vlan=False)
@@ -88,8 +168,12 @@ class TestProtocolsSegmentRouting(VyOSUnitTestSHIM.TestCase):
         self.cli_commit()
 
         for interface in interfaces:
-            self.assertEqual(sysctl_read(f'net.ipv6.conf.{interface}.seg6_enabled'), '1')
-            self.assertEqual(sysctl_read(f'net.ipv6.conf.{interface}.seg6_require_hmac'), '-1') # ignore
+            self.assertEqual(
+                sysctl_read(f'net.ipv6.conf.{interface}.seg6_enabled'), '1'
+            )
+            self.assertEqual(
+                sysctl_read(f'net.ipv6.conf.{interface}.seg6_require_hmac'), '-1'
+            )  # ignore
 
         # HMAC drop
         for interface in interfaces:
@@ -98,8 +182,12 @@ class TestProtocolsSegmentRouting(VyOSUnitTestSHIM.TestCase):
         self.cli_commit()
 
         for interface in interfaces:
-            self.assertEqual(sysctl_read(f'net.ipv6.conf.{interface}.seg6_enabled'), '1')
-            self.assertEqual(sysctl_read(f'net.ipv6.conf.{interface}.seg6_require_hmac'), '1') # drop
+            self.assertEqual(
+                sysctl_read(f'net.ipv6.conf.{interface}.seg6_enabled'), '1'
+            )
+            self.assertEqual(
+                sysctl_read(f'net.ipv6.conf.{interface}.seg6_require_hmac'), '1'
+            )  # drop
 
         # Disable SRv6 on first interface
         first_if = interfaces[-1]
@@ -107,6 +195,7 @@ class TestProtocolsSegmentRouting(VyOSUnitTestSHIM.TestCase):
         self.cli_commit()
 
         self.assertEqual(sysctl_read(f'net.ipv6.conf.{first_if}.seg6_enabled'), '0')
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2, failfast=VyOSUnitTestSHIM.TestCase.debug_on())

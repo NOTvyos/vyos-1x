@@ -55,7 +55,7 @@ def _get_environment(location=None):
         loader=loc_loader,
         trim_blocks=True,
         undefined=ChainableUndefined,
-        extensions=['jinja2.ext.loopcontrols']
+        extensions=['jinja2.ext.loopcontrols', 'jinja2.ext.do']
     )
     env.filters.update(_FILTERS)
     env.tests.update(_TESTS)
@@ -572,6 +572,11 @@ def get_openvpn_data_ciphers(ciphers):
             out.append(cipher)
     return ':'.join(out).upper()
 
+
+@register_filter('openvpn_data_ciphers_fallback')
+def get_openvpn_data_ciphers_fallback(cipher):
+    return get_openvpn_cipher(cipher)
+
 @register_filter('snmp_auth_oid')
 def snmp_auth_oid(type):
     if type not in ['md5', 'sha', 'aes', 'des', 'none']:
@@ -914,6 +919,25 @@ def kea_high_availability_json(config):
 
     return dumps(data)
 
+@register_filter('kea_client_class_json')
+def kea_client_class_json(client_classes):
+    from vyos.kea import kea_build_client_class_test
+    from json import dumps
+    out = []
+
+    for name, config in client_classes.items():
+        if 'disable' in config:
+            continue
+
+        client_class = {
+            'name': name,
+            'test': kea_build_client_class_test(config)
+        }
+
+        out.append(client_class)
+
+    return dumps(out, indent=4)
+
 @register_filter('kea_dynamic_dns_update_main_json')
 def kea_dynamic_dns_update_main_json(config):
     from vyos.kea import kea_parse_ddns_settings
@@ -996,7 +1020,7 @@ def kea_shared_network_json(shared_networks):
             'name': name,
             'authoritative': ('authoritative' in config),
             'subnet4': [],
-            'user-context': {}
+            'user-context': {'enable-ping-check': False}
         }
 
         if 'dynamic_dns_update' in config:
@@ -1011,14 +1035,20 @@ def kea_shared_network_json(shared_networks):
             if 'bootfile_server' in config['option']:
                 network['next-server'] = config['option']['bootfile_server']
 
-        if 'ping_check' in config:
-            network['user-context']['enable-ping-check'] = True
+        subnet_ping_check = False
 
         if 'subnet' in config:
             for subnet, subnet_config in config['subnet'].items():
                 if 'disable' in subnet_config:
                     continue
+
+                if 'ping_check' in subnet_config:
+                    subnet_ping_check = True
+
                 network['subnet4'].append(kea_parse_subnet(subnet, subnet_config))
+
+        if 'ping_check' in config or subnet_ping_check:
+            network['user-context']['enable-ping-check'] = True
 
         out.append(network)
 

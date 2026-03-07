@@ -98,6 +98,8 @@
 {% endif %}
 {% if config.enforce_first_as is vyos_defined %}
  neighbor {{ neighbor }} enforce-first-as
+{% else %}
+ no neighbor {{ neighbor }} enforce-first-as
 {% endif %}
 {% if config.strict_capability_match is vyos_defined %}
  neighbor {{ neighbor }} strict-capability-match
@@ -508,11 +510,17 @@ router bgp {{ system_as }} {{ 'vrf ' ~ vrf if vrf is vyos_defined }}
 {%                 if bmp_config.monitor.ipv4_unicast.post_policy is vyos_defined %}
   bmp monitor ipv4 unicast post-policy
 {%                 endif %}
+{%                 if bmp_config.monitor.ipv4_unicast.local_rib is vyos_defined %}
+  bmp monitor ipv4 unicast loc-rib
+{%                 endif %}
 {%                 if bmp_config.monitor.ipv6_unicast.pre_policy is vyos_defined %}
   bmp monitor ipv6 unicast pre-policy
 {%                 endif %}
 {%                 if bmp_config.monitor.ipv6_unicast.post_policy is vyos_defined %}
   bmp monitor ipv6 unicast post-policy
+{%                 endif %}
+{%                 if bmp_config.monitor.ipv6_unicast.local_rib is vyos_defined %}
+  bmp monitor ipv6 unicast loc-rib
 {%                 endif %}
 {%             endif %}
 {%             if bmp_config.address is vyos_defined %}
@@ -644,6 +652,8 @@ bgp route-reflector allow-outbound-policy
 {% endif %}
 {% if parameters.reject_as_sets is vyos_defined %}
  bgp reject-as-sets
+{% else %}
+ no bgp reject-as-sets
 {% endif %}
 {% if parameters.router_id is vyos_defined and parameters.router_id is not none %}
  bgp router-id {{ parameters.router_id }}

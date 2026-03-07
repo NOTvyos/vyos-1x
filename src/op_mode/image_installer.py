@@ -57,11 +57,13 @@ from vyos.utils.auth import get_local_users
 from vyos.utils.auth import get_user_home_dir
 from vyos.version import get_version_data
 from vyos.utils.file import write_file
+from vyos.config_mgmt import unsaved_commits
 
 # define text messages
 MSG_ERR_NOT_LIVE: str = 'The system is already installed. Please use "add system image" instead.'
 MSG_ERR_LIVE: str = 'The system is in live-boot mode. Please use "install image" instead.'
 MSG_ERR_NOT_ENOUGH_SPACE: str = 'Image upgrade requires at least 2GB of free drive space.'
+MSG_ERR_UNSAVED_COMMITS: str = 'There are unsaved changes to the configuration. Either save or revert before upgrade.'
 MSG_ERR_NO_DISK: str = 'No suitable disk was found. There must be at least one disk of 2GB or greater size.'
 MSG_ERR_IMPROPER_IMAGE: str = 'Missing sha256sum.txt.\nEither this image is corrupted, or of era 1.2.x (md5sum) and would downgrade image tools;\ndisallowed in either case.'
 MSG_ERR_INCOMPATIBLE_IMAGE: str = 'Image compatibility check failed, aborting installation.'
@@ -85,6 +87,7 @@ MSG_INFO_INSTALL_PARTITONING: str = 'Creating partition table...'
 MSG_INPUT_CONFIG_FOUND: str = 'An active configuration was found. Would you like to copy it to the new image?'
 MSG_INPUT_CONFIG_CHOICE: str = 'The following config files are available for boot:'
 MSG_INPUT_CONFIG_CHOOSE: str = 'Which file would you like as boot config?'
+MSG_INPUT_UNSAVED_COMMITS: str = 'There are unsaved changes to the configuration. They will not be copied to the new image. Continue without saving?'
 MSG_INPUT_IMAGE_NAME: str = 'What would you like to name this image?'
 MSG_INPUT_IMAGE_NAME_TAKEN: str = 'There is already an installed image by that name; please choose again'
 MSG_INPUT_IMAGE_DEFAULT: str = 'Would you like to set the new image as the default one for boot?'
@@ -266,7 +269,7 @@ def search_previous_installation(disks: list[str]) -> None:
             if disk.partition_mount(partition, mnt_tmp):
                 if Path(mnt_tmp + '/boot').exists():
                     for path in Path(mnt_tmp + '/boot').iterdir():
-                        if path.joinpath('rw/config/.vyatta_config').exists():
+                        if path.joinpath('rw/opt/vyatta/etc/config/.vyatta_config').exists():
                             image_data.append((path.name, partition))
                 if Path(mnt_tmp + '/luks').exists():
                     for path in Path(mnt_tmp + '/luks').iterdir():
@@ -319,7 +322,7 @@ def search_previous_installation(disks: list[str]) -> None:
     disk.partition_mount(image_drive, mnt_tmp)
 
     if not encrypted:
-        copytree(f'{mnt_tmp}/boot/{image_name}/rw/config', mnt_config)
+        copytree(f'{mnt_tmp}/boot/{image_name}/rw/opt/vyatta/etc/config', mnt_config)
     else:
         copy(f'{mnt_tmp}/luks/{image_name}', mnt_encrypted_config)
 
@@ -512,6 +515,10 @@ def get_cli_kernel_options(config_file: str) -> list:
             f'initcall_blacklist=acpi_cpufreq_init amd_pstate={mode}')
     if 'quiet' in kernel_options:
         cmdline_options.append('quiet')
+
+    # Early reboot on kernel panic via kernel cmdline (must match system_option.py)
+    if dict_search('system.option.reboot-on-panic', config_dict) is not None:
+        cmdline_options.append('panic=60')
 
     if 'disable-hpet' in kernel_options:
         cmdline_options.append('hpet=disable')
@@ -1078,6 +1085,13 @@ def add_image(image_path: str, vrf: str = None, username: str = '',
     # sounds like a sensible estimate.
     if disk_usage('/').free < (2 * 1024**3):
         exit(MSG_ERR_NOT_ENOUGH_SPACE)
+
+    if unsaved_commits():
+        if not no_prompt:
+            if not ask_yes_no(MSG_INPUT_UNSAVED_COMMITS, default=False):
+                exit()
+        else:
+            exit(MSG_ERR_UNSAVED_COMMITS)
 
     environ['REMOTE_USERNAME'] = username
     environ['REMOTE_PASSWORD'] = password

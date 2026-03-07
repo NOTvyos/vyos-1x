@@ -30,7 +30,7 @@ from vyos import airbag
 from vyos.base import Warning
 from vyos.config import Config, config_dict_merge
 from vyos.configdep import set_dependents, call_dependents
-from vyos.configdict import node_changed, leaf_node_changed
+from vyos.configdict import node_changed
 from vyos.ifconfig import Section
 from vyos.logger import getLogger
 from vyos.template import render
@@ -39,9 +39,11 @@ from vyos.utils.kernel import check_kmod
 from vyos.utils.kernel import unload_kmod
 from vyos.utils.kernel import list_loaded_modules
 from vyos.utils.process import call
+from vyos.utils.process import is_systemd_service_active
 
 from vyos.vpp import VPPControl
 from vyos.vpp import control_host
+from vyos.vpp import VppNotRunningError
 from vyos.vpp.config_deps import deps_xconnect_dict
 from vyos.vpp.config_verify import (
     verify_dev_driver,
@@ -90,7 +92,6 @@ dependency_interface_type_map = {
 # dict of drivers that needs to be overrided
 override_drivers: dict[str, str] = {
     'hv_netvsc': 'uio_hv_generic',
-    'ena': 'vfio-pci',
 }
 
 # drivers that does not use PCIe addresses
@@ -193,6 +194,33 @@ def _get_max_xdp_rx_queues(config: dict):
     return 1
 
 
+def _check_removed_interfaces(config: dict, feature_name: str, interfaces_config: dict):
+    """
+    Check if removed interfaces are used in any feature configuration
+
+    Args:
+        config: The main configuration dictionary
+        feature_name: Human-readable feature name for error messages
+        interfaces_config: The interfaces dictionary from the feature config
+    Example:
+        _check_removed_interfaces(config, 'IPFIX monitoring', config.get('ipfix', {}).get('interface', {}))
+    """
+    if (
+        'removed_ifaces' not in config
+        or not config['removed_ifaces']
+        or not interfaces_config
+    ):
+        return
+
+    for removed_iface in config['removed_ifaces']:
+        iface_name = removed_iface.get('iface_name')
+        if iface_name and iface_name in interfaces_config:
+            raise ConfigError(
+                f'Cannot remove interface {iface_name} - it is currently configured for {feature_name}. '
+                f'Remove it from {feature_name} configuration first.'
+            )
+
+
 def get_config(config=None):
     # use persistent config to store interfaces data between executions
     # this is required because some interfaces after they are connected
@@ -228,34 +256,31 @@ def get_config(config=None):
         for removed_iface in tmp:
             to_append = {
                 'iface_name': removed_iface,
-                'driver': effective_config['settings']['interface'][removed_iface][
-                    'driver'
-                ],
+                'driver': 'dpdk',
             }
             removed_ifaces.append(to_append)
             # add an interface to a list of interfaces that need
             # to be reinitialized after the commit
             set_dependents('ethernet', conf, removed_iface)
 
-    # Get interfaces that are used in PPPoe for control-plane integration
-    pppoe_conf = conf.get_config_dict(
-        ['service', 'pppoe-server'],
+    # Get interfaces that should be used in PPPoE for control-plane integration
+    pppoe_ifaces = conf.get_config_dict(
+        ['service', 'pppoe-server', 'interface'],
         key_mangling=('-', '_'),
         get_first_key=True,
         no_tag_node_value_mangle=True,
     )
-    pppoe_map_ifaces = [
-        ifname
-        for ifname, iface_conf in pppoe_conf.get('interface', {}).items()
-        if 'vpp_cp' in iface_conf
+    changed_pppoe_ifaces = [
+        iface for iface in pppoe_ifaces if iface.split('.')[0] in tmp
     ]
 
     if not conf.exists(base):
+        if changed_pppoe_ifaces:
+            set_dependents('pppoe_server', conf)
         return {
             'removed_ifaces': removed_ifaces,
             'xconn_members': xconn_members,
             'persist_config': eth_ifaces_persist,
-            **({'pppoe_ifaces': pppoe_map_ifaces} if pppoe_map_ifaces else {}),
         }
 
     config = conf.get_config_dict(
@@ -269,12 +294,15 @@ def get_config(config=None):
     # dictionary retrieved.
     default_values = conf.get_config_defaults(**config.kwargs, recursive=True)
 
-    # delete driver-incompatible defaults
-    for iface, iface_config in config.get('settings', {}).get('interface', {}).items():
-        if iface_config.get('driver') == 'dpdk':
-            del default_values['settings']['interface'][iface]['xdp_options']
-        elif iface_config.get('driver') == 'xdp':
-            del default_values['settings']['interface'][iface]['dpdk_options']
+    # Since XDP is no longer configurable via the CLI (T8202),
+    # this code is kept commented out to simplify reintroducing XDP in the future.
+    #
+    # # delete driver-incompatible defaults
+    # for iface, iface_config in config.get('settings', {}).get('interface', {}).items():
+    #     if iface_config.get('driver') == 'dpdk':
+    #         del default_values['settings']['interface'][iface]['xdp_options']
+    #     elif iface_config.get('driver') == 'xdp':
+    #         del default_values['settings']['interface'][iface]['dpdk_options']
 
     config = config_dict_merge(default_values, config)
 
@@ -290,6 +318,8 @@ def get_config(config=None):
         effective_config = config_dict_merge(default_values_effective, effective_config)
         # Buffer normalization (auto → computed)
         _normalize_buffers(effective_config)
+        for iface_config in effective_config['settings']['interface'].values():
+            iface_config['driver'] = 'dpdk'
         config['effective'] = effective_config
 
     # Save important info about all interfaces that cannot be retrieved later
@@ -309,15 +339,14 @@ def get_config(config=None):
     if 'settings' in config:
         if 'interface' in config['settings']:
             for iface, iface_config in config['settings']['interface'].items():
-                # Driver must be configured to continue
-                if 'driver' not in iface_config:
-                    raise ConfigError(
-                        f'"driver" must be configured for {iface} interface!'
-                    )
+                iface_config['driver'] = 'dpdk'
 
-                old_driver = leaf_node_changed(
-                    conf, base_settings + ['interface', iface, 'driver']
-                )
+                # old_driver = leaf_node_changed(
+                #     conf, base_settings + ['interface', iface, 'driver']
+                # )
+                #
+                # if old_driver:
+                #     config['settings']['interface'][iface]['driver_changed'] = {}
 
                 # Get current kernel module, required for extra verification and
                 # logic for VMBus interfaces
@@ -329,13 +358,13 @@ def get_config(config=None):
                 iface_filter_eth(conf, iface)
                 set_dependents('ethernet', conf, iface)
                 # Interfaces with changed driver should be removed/readded
-                if old_driver and old_driver[0] == 'dpdk':
-                    removed_ifaces.append(
-                        {
-                            'iface_name': iface,
-                            'driver': 'dpdk',
-                        }
-                    )
+                # if old_driver and old_driver[0] == 'dpdk':
+                #     removed_ifaces.append(
+                #         {
+                #             'iface_name': iface,
+                #             'driver': 'dpdk',
+                #         }
+                #     )
 
                 # Get PCI address or device ID
                 if iface_config['driver'] == 'dpdk':
@@ -350,8 +379,8 @@ def get_config(config=None):
                     else:
                         try:
                             iface_to_search = iface
-                            if old_driver and old_driver[0] == 'xdp':
-                                iface_to_search = f'defunct_{iface}'
+                            # if old_driver and old_driver[0] == 'xdp':
+                            #     iface_to_search = f'defunct_{iface}'
                             iface_config['dpdk_options']['dev_id'] = (
                                 control_host.get_dev_id(iface_to_search)
                             )
@@ -419,28 +448,28 @@ def get_config(config=None):
     if conf.exists(['vpp', 'acl']):
         set_dependents('vpp_acl', conf)
 
+    # IPFIX dependency
+    if conf.exists(['vpp', 'ipfix']):
+        set_dependents('vpp_ipfix', conf)
+
     # PPPoE dependency
-    if pppoe_map_ifaces:
-        config['pppoe_ifaces'] = pppoe_map_ifaces
+    added_pppoe_ifaces = [
+        iface
+        for iface in pppoe_ifaces
+        if iface.split('.')[0] in config.get('settings', {}).get('interface', {})
+    ]
+    changed_pppoe_ifaces.extend(added_pppoe_ifaces)
+    if changed_pppoe_ifaces:
         set_dependents('pppoe_server', conf)
 
     return config
 
 
 def verify(config):
-    # Cannot remove interface if PPPoE control-plane is still enabled
-    removed_ifaces = [iface['iface_name'] for iface in config.get('removed_ifaces', [])]
-    pppoe_removed_ifaces = [
-        p
-        for p in config.get('pppoe_ifaces', [])
-        for r in removed_ifaces
-        if p == r or p.startswith(f'{r}.')
-    ]
-    if pppoe_removed_ifaces:
-        raise ConfigError(
-            f'{", ".join(pppoe_removed_ifaces)} still in use by the PPPoE server. '
-            'Disable PPPoE control-plane integration with VPP before proceeding.'
-        )
+    # Check remove VPP interface that used in IPFIX
+    _check_removed_interfaces(
+        config, 'IPFIX monitoring', config.get('ipfix', {}).get('interface', {})
+    )
 
     # bail out early - looks like removal from running config
     if not config or ('removed_ifaces' in config and 'settings' not in config):
@@ -506,10 +535,14 @@ def verify(config):
     # ensure DPDK/XDP settings are properly configured
     for iface, iface_config in config['settings']['interface'].items():
         # check if selected driver is supported, but only for new interfaces
-        if iface not in config.get('effective', {}).get('settings', {}).get(
-            'interface', {}
+        # or if driver was changed
+        original_driver = config['persist_config'][iface]['original_driver']
+        if (
+            iface
+            not in config.get('effective', {}).get('settings', {}).get('interface', {})
+            or 'driver_changed' in iface_config
         ):
-            if not verify_dev_driver(iface, iface_config['driver']):
+            if not verify_dev_driver(iface_config['driver'], original_driver):
                 raise ConfigError(
                     f'Driver {iface_config["driver"]} is not compatible with interface {iface}!'
                 )
@@ -729,10 +762,14 @@ def apply(config):
 
     if 'settings' in config and 'interface' in config.get('settings'):
         # connect to VPP
-        # must be performed multiple attempts because API is not available
-        # immediately after the service restart
         try:
-            vpp_control = VPPControl(attempts=20, interval=500)
+            # Bail out early if VPP service is not running
+            if not is_systemd_service_active(f'{service_name}.service'):
+                raise VppNotRunningError(
+                    'VPP service is not running or failed to start'
+                )
+
+            vpp_control = VPPControl()
 
             # preconfigure LCP plugin
             if 'ignore_kernel_routes' in config.get('settings', {}).get('lcp', {}):
@@ -835,7 +872,7 @@ def apply(config):
                         bitmask |= 1 << wid
                 vpp_control.set_nat_workers(bitmask)
 
-        except (VPPIOError, VPPValueError) as e:
+        except (VPPIOError, VPPValueError, VppNotRunningError) as e:
             # if cannot connect to VPP or an error occurred then
             # we need to stop vpp service and initialize interfaces
             call(f'systemctl stop {service_name}.service')

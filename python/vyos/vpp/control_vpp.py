@@ -494,3 +494,75 @@ class VPPControl:
                 cp_sw_if_index=self.get_sw_if_index(vpp_pair_name),
                 is_add=is_add,
             )
+
+    @_Decorators.api_call
+    def enable_dhcp_client(self, ifname: str) -> None:
+        """Enable DHCP client detection on a given interface
+
+        Args:
+            ifname (str): name of an interface in kernel
+        """
+        iface_index = self.get_sw_if_index(ifname)
+        feature_is_enabled = self.__vpp_api_client.api.feature_is_enabled(
+            sw_if_index=iface_index,
+            feature_name='ip4-dhcp-client-detect',
+            arc_name='ip4-unicast',
+        )
+        if not feature_is_enabled.is_enabled:
+            self.__vpp_api_client.api.dhcp_client_detect_enable_disable(
+                sw_if_index=iface_index,
+                enable=True,
+            )
+
+    @_Decorators.api_call
+    def disable_dhcp_client(self, ifname: str) -> None:
+        """Disable DHCP client detection on a given interface
+
+        Args:
+            ifname (str): name of an interface in kernel
+        """
+        self.__vpp_api_client.api.dhcp_client_detect_enable_disable(
+            sw_if_index=self.get_sw_if_index(ifname),
+            enable=False,
+        )
+
+    @_Decorators.api_call
+    def enable_icmpv6_ra_punt(self, ifname: str) -> None:
+        """Enable ip6-icmp-ra-punt feature on a given interface for both ip6-unicast and ip6-multicast arcs.
+
+        This ensures that IPv6 ICMP Router Advertisements (RA) are punted to the host, which is typically required
+        for features such as DHCPv6 client operation.
+
+        Args:
+            ifname (str): name of an interface in kernel
+        """
+        iface_index = self.get_sw_if_index(ifname)
+        for arc_name in ['ip6-unicast', 'ip6-multicast']:
+            feature_is_enabled = self.__vpp_api_client.api.feature_is_enabled(
+                sw_if_index=iface_index,
+                feature_name='ip6-icmp-ra-punt',
+                arc_name=arc_name,
+            )
+
+            if not feature_is_enabled.is_enabled:
+                self.__vpp_api_client.api.feature_enable_disable(
+                    sw_if_index=iface_index,
+                    enable=True,
+                    arc_name=arc_name,
+                    feature_name='ip6-icmp-ra-punt',
+                )
+
+    @_Decorators.api_call
+    def disable_icmpv6_ra_punt(self, ifname: str) -> None:
+        """Disable ip6-icmp-ra-punt feature on a given interface
+
+        Args:
+            ifname (str): name of an interface in kernel
+        """
+        for arc_name in ['ip6-unicast', 'ip6-multicast']:
+            self.__vpp_api_client.api.feature_enable_disable(
+                sw_if_index=self.get_sw_if_index(ifname),
+                enable=False,
+                arc_name=arc_name,
+                feature_name='ip6-icmp-ra-punt',
+            )

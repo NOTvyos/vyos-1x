@@ -398,7 +398,9 @@ class TestProtocolsBGP(VyOSUnitTestSHIM.TestCase):
         self.assertIn(f' bgp bestpath compare-routerid', frrconfig)
         self.assertIn(f' bgp bestpath peer-type multipath-relax', frrconfig)
         self.assertIn(f' bgp minimum-holdtime {min_hold_time}', frrconfig)
-        self.assertIn(f' bgp reject-as-sets', frrconfig)
+        self.assertNotIn(
+            f'bgp reject-as-sets', frrconfig
+        )  # default was changed in FRR 10.5 to 'reject-as-sets'
         self.assertIn(f' bgp route-reflector allow-outbound-policy', frrconfig)
         self.assertIn(f' no bgp ipv6-auto-ra', frrconfig)
         self.assertIn(f' bgp shutdown', frrconfig)
@@ -424,6 +426,12 @@ class TestProtocolsBGP(VyOSUnitTestSHIM.TestCase):
                                          stop_subsection='^ exit-address-family')
         self.assertIn(f'  maximum-paths {max_path_v6}', afiv6_config)
         self.assertIn(f'  maximum-paths ibgp {max_path_v6ibgp}', afiv6_config)
+
+        # Verify reject-as-sets
+        self.cli_delete(base_path + ['parameters', 'reject-as-sets'])
+        self.cli_commit()
+        frrconfig = self.getFRRconfig(f'router bgp {ASN}', stop_section='^exit')
+        self.assertIn(f'no bgp reject-as-sets', frrconfig)
 
     def test_bgp_02_neighbors(self):
         # Test out individual neighbor configuration items, not all of them are
@@ -1649,7 +1657,9 @@ class TestProtocolsBGP(VyOSUnitTestSHIM.TestCase):
         self.cli_set(target_path + ['max-retry', max_retry])
         self.cli_set(target_path + ['mirror'])
         self.cli_set(target_path + ['monitor', 'ipv4-unicast', monitor_ipv4])
+        self.cli_set(target_path + ['monitor', 'ipv4-unicast', 'local-rib'])
         self.cli_set(target_path + ['monitor', 'ipv6-unicast', monitor_ipv6])
+        self.cli_set(target_path + ['monitor', 'ipv6-unicast', 'local-rib'])
         self.cli_commit()
 
         # Verify bgpd bmp configuration
@@ -1659,6 +1669,8 @@ class TestProtocolsBGP(VyOSUnitTestSHIM.TestCase):
         self.assertIn(f'bmp mirror', frrconfig)
         self.assertIn(f'bmp monitor ipv4 unicast {monitor_ipv4}', frrconfig)
         self.assertIn(f'bmp monitor ipv6 unicast {monitor_ipv6}', frrconfig)
+        self.assertIn(f'bmp monitor ipv4 unicast loc-rib', frrconfig)
+        self.assertIn(f'bmp monitor ipv6 unicast loc-rib', frrconfig)
         self.assertIn(f'bmp connect {target_address} port {target_port} min-retry {min_retry} max-retry {max_retry}', frrconfig)
 
 if __name__ == '__main__':

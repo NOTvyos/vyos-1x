@@ -19,11 +19,10 @@ import os
 from copy import deepcopy
 from passlib.hosts import linux_context
 from psutil import users
-from pwd import getpwall
-from pwd import getpwuid
 from sys import exit
 from time import sleep
 
+from vyos.base import Warning
 from vyos.base import DeprecationWarning
 from vyos.config import Config
 from vyos.configdep import set_dependents
@@ -33,6 +32,7 @@ from vyos.defaults import SSH_DSA_DEPRECATION_WARNING
 from vyos.template import render
 from vyos.template import is_ipv4
 from vyos.utils.auth import get_current_user
+from vyos.utils.auth import get_local_passwd_entries
 from vyos.utils.auth import get_local_users
 from vyos.utils.auth import get_user_home_dir
 from vyos.utils.auth import MIN_USER_UID
@@ -40,6 +40,7 @@ from vyos.utils.configfs import delete_cli_node
 from vyos.utils.configfs import add_cli_node
 from vyos.utils.dict import dict_search
 from vyos.utils.file import move_recursive
+from vyos.utils.network import is_addr_assigned
 from vyos.utils.permission import chown
 from vyos.utils.process import cmd
 from vyos.utils.process import call
@@ -130,7 +131,7 @@ def verify(login):
             raise ConfigError(f'Attempting to delete current user: {tmp}')
 
     if 'user' in login:
-        system_users = getpwall()
+        system_users = get_local_passwd_entries()
         for user, user_config in login['user'].items():
             # Linux system users range up until UID 1000, we can not create a
             # VyOS CLI user which already exists as system user
@@ -185,12 +186,16 @@ def verify(login):
 
         verify_vrf(login['radius'])
 
-        if 'source_address' in login['radius']:
+        if addresses := dict_search('radius.source_address', login):
             ipv4_count = 0
             ipv6_count = 0
-            for address in login['radius']['source_address']:
+            radius_vrf = dict_search('radius.vrf', login)
+            for address in addresses:
                 if is_ipv4(address): ipv4_count += 1
                 else:                ipv6_count += 1
+
+                if not is_addr_assigned(address, vrf=radius_vrf):
+                    Warning(f'Specified RADIUS source-address "{address}" is not assigned!')
 
             if ipv4_count > 1:
                 raise ConfigError('Only one IPv4 source-address can be set!')
@@ -208,12 +213,17 @@ def verify(login):
                 fail = False
 
         if fail:
-            raise ConfigError('All RADIUS servers are disabled')
+            raise ConfigError('All TACACS servers are disabled')
 
         if tacacs_servers_count > MAX_TACACS_COUNT:
             raise ConfigError(f'Number of TACACS servers exceeded maximum of {MAX_TACACS_COUNT}!')
 
         verify_vrf(login['tacacs'])
+
+        if tmp := dict_search('tacacs.source_address', login):
+            tacacs_vrf = dict_search('tacacs.vrf', login)
+            if not is_addr_assigned(tmp, vrf=tacacs_vrf):
+                Warning(f'Specified TACACS source-address "{tmp}" is not assigned!')
 
     if 'max_login_session' in login and 'timeout' not in login:
         raise ConfigError('"login timeout" must be configured!')
@@ -326,7 +336,7 @@ def apply(login):
                 home_directory = f'/home/{user}'
             command += f" --home '{home_directory}'"
 
-            command += f' --groups frr,frrvty,vyattacfg,sudo,adm,dip,disk,_kea {user}'
+            command += f' --groups frr,frrvty,vyattacfg,sudo,adm,dip,disk,_kea,vpp {user}'
             try:
                 cmd(command)
                 # we should not rely on the value stored in user_config['home_directory'], as a
@@ -369,7 +379,7 @@ def apply(login):
             # retrieve current owner of home directory and adjust on demand
             dir_owner = None
             try:
-                dir_owner = getpwuid(os.stat(home_dir).st_uid).pw_name
+                dir_owner = get_local_passwd_entries(os.stat(home_dir).st_uid).pw_name
             except:
                 pass
 

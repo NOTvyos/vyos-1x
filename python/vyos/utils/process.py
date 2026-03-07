@@ -21,7 +21,7 @@ from subprocess import STDOUT
 from subprocess import DEVNULL
 
 def popen(command, flag='', shell=None, input=None, timeout=None, env=None,
-          stdout=PIPE, stderr=PIPE, decode='utf-8'):
+          stdout=PIPE, stderr=PIPE, decode='utf-8', buffered=True):
     """
     popen is a wrapper helper aound subprocess.Popen
     with it default setting it will return a tuple (out, err)
@@ -45,6 +45,9 @@ def popen(command, flag='', shell=None, input=None, timeout=None, env=None,
               - DEVNULL, discard the output
     decode:  specify the expected text encoding (utf-8, ascii, ...)
              the default is explicitely utf-8 which is python's own default
+    buffered: define how process output shall be presented to stdout
+               - true: buffer output and return once after command finished
+               - false: immediately output strings on stdout - give live feedback
 
     usage:
     get both stdout and stderr: popen('command', stdout=PIPE, stderr=STDOUT)
@@ -76,38 +79,54 @@ def popen(command, flag='', shell=None, input=None, timeout=None, env=None,
         stdin = PIPE
         input = input.encode() if type(input) is str else input
 
+    text = None
+    bufsize = -1 # default: means the system default of io.DEFAULT_BUFFER_SIZE will be used
+    if not buffered:
+        text = True # Treat output as strings (not bytes)
+        bufsize = 1 # Enable line buffering
+
     p = Popen(command, stdin=stdin, stdout=stdout, stderr=stderr,
-              env=env, shell=use_shell)
+              env=env, shell=use_shell, text=text, bufsize=bufsize)
 
-    pipe = p.communicate(input, timeout)
+    if buffered:
+        pipe = p.communicate(input, timeout)
+        rc = p.returncode
 
-    pipe_out = b''
-    if stdout == PIPE:
-        pipe_out = pipe[0]
+        pipe_out = b''
+        if stdout == PIPE:
+            pipe_out = pipe[0]
 
-    pipe_err = b''
-    if stderr == PIPE:
-        pipe_err = pipe[1]
+        pipe_err = b''
+        if stderr == PIPE:
+            pipe_err = pipe[1]
 
-    str_out = pipe_out.decode(decode).replace('\r\n', '\n').strip()
-    str_err = pipe_err.decode(decode).replace('\r\n', '\n').strip()
+        str_out = pipe_out.decode(decode).replace('\r\n', '\n').strip()
+        str_err = pipe_err.decode(decode).replace('\r\n', '\n').strip()
 
-    out_msg = f"returned (out):\n{str_out}"
-    if str_out:
-        debug.message(out_msg, flag)
+        out_msg = f"returned (out):\n{str_out}"
+        if str_out:
+            debug.message(out_msg, flag)
 
-    if str_err:
-        from sys import stderr
-        err_msg = f"returned (err):\n{str_err}"
-        # this message will also be send to syslog via airbag
-        debug.message(err_msg, flag, destination=stderr)
+        if str_err:
+            from sys import stderr
+            err_msg = f"returned (err):\n{str_err}"
+            # this message will also be send to syslog via airbag
+            debug.message(err_msg, flag, destination=stderr)
 
-        # should something go wrong, report this too via airbag
-        airbag.noteworthy(cmd_msg)
-        airbag.noteworthy(out_msg)
-        airbag.noteworthy(err_msg)
+            # should something go wrong, report this too via airbag
+            airbag.noteworthy(cmd_msg)
+            airbag.noteworthy(out_msg)
+            airbag.noteworthy(err_msg)
+    else:
+        output_lines = []
+        for line in p.stdout:
+            print(line, end='', flush=True)  # print each line as it arrives
+            output_lines.append(line)
+        p.stdout.close()
+        rc = p.wait()
+        str_out = ''.join(output_lines)
 
-    return str_out, p.returncode
+    return str_out, rc
 
 
 def run(command, flag='', shell=None, input=None, timeout=None, env=None,
@@ -157,9 +176,8 @@ def cmd(command, flag='', shell=None, input=None, timeout=None, env=None,
             raise raising(feedback)
     return decoded
 
-
 def rc_cmd(command, flag='', shell=None, input=None, timeout=None, env=None,
-           stdout=PIPE, stderr=STDOUT, decode='utf-8'):
+           stdout=PIPE, stderr=STDOUT, decode='utf-8', buffered=True):
     """
     A wrapper around popen, which returns the return code
     of a command and stdout
@@ -175,6 +193,7 @@ def rc_cmd(command, flag='', shell=None, input=None, timeout=None, env=None,
         input=input, timeout=timeout,
         env=env, shell=shell,
         decode=decode,
+        buffered=buffered,
     )
     return code, out
 

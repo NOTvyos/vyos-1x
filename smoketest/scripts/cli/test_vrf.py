@@ -40,8 +40,8 @@ from vyos.xml_ref import default_value
 
 base_path = ['vrf']
 vrfs = ['red', 'green', 'blue', 'foo-bar', 'baz_foo']
-v4_protocols = ['any', 'babel', 'bgp', 'connected', 'eigrp', 'isis', 'kernel', 'ospf', 'rip', 'static', 'table']
-v6_protocols = ['any', 'babel', 'bgp', 'connected', 'isis', 'kernel', 'ospfv3', 'ripng', 'static', 'table']
+v4_protocols = ['any', 'babel', 'bgp', 'eigrp', 'isis', 'ospf', 'rip', 'static']
+v6_protocols = ['any', 'babel', 'bgp', 'isis', 'ospfv3', 'ripng', 'static']
 
 class VRFTest(VyOSUnitTestSHIM.TestCase):
     _interfaces = []
@@ -325,6 +325,48 @@ class VRFTest(VyOSUnitTestSHIM.TestCase):
         # Delete Interface
         self.cli_delete(['interfaces', 'dummy', interface])
         self.cli_commit()
+
+    def test_delete_vrf_protocols_should_not_crash(self):
+        # Testcase for issue T7255:
+        #   - verify that deleting the 'protocols' node under a VRF does not crash.
+
+        table = '3000'
+        vrf = 'purple'
+        interface = 'dum3000'
+        router_id = '10.2.0.2'
+
+        # Configure dummy interface and assign to VRF
+        self.cli_set(['interfaces', 'dummy', interface, 'address', '10.1.0.254/24'])
+        self.cli_set(['interfaces', 'dummy', interface, 'vrf', vrf])
+
+        # Configure OSPF under the VRF
+        base_ospf_path = base_path + ['name', vrf, 'protocols', 'ospf']
+        self.cli_set(base_ospf_path + ['interface', interface, 'area', '0'])
+        self.cli_set(base_ospf_path + ['parameters', 'router-id', router_id])
+        self.cli_set(['protocols', 'ospf'])
+
+        # Assign routing table number to the VRF
+        self.cli_set(base_path + ['name', vrf, 'table', table])
+
+        # Commit configuration and verify VRF was successfully created
+        self.cli_commit()
+        self.assertTrue(interface_exists(vrf))
+        frrconfig = self.getFRRconfig(f'router ospf vrf {vrf}', stop_section='^exit')
+        self.assertIn(f'ospf router-id {router_id}', frrconfig)
+
+        try:
+            # Attempt to delete the entire 'protocols' subtree under VRF
+            self.cli_delete(base_path + ['name', vrf, 'protocols'])
+            self.cli_commit()
+
+            # Verify result of deleting 'protocols' subtree
+            frrconfig = self.getFRRconfig(f'router ospf vrf {vrf}', stop_section='^exit')
+            self.assertNotIn(f'ospf router-id {router_id}', frrconfig)
+        finally:
+            # Clean up dummy interface and VRF and re-commit
+            self.cli_delete(['interfaces', 'dummy', interface])
+            self.cli_delete(base_path + ['name', vrf])
+            self.cli_commit()
 
     def test_vrf_disable_forwarding(self):
         table = '2000'
@@ -641,6 +683,51 @@ class VRFTest(VyOSUnitTestSHIM.TestCase):
         self.assertEqual(num_rules, 2)
 
         self.cli_delete(['nat'])
+
+    def test_vrf_policy_based_route(self):
+        vrf_name = 'test-pbr_123'
+
+        self.cli_set(base_path + ['name', vrf_name, 'table', '17563'])
+
+        policy_path = ['policy', 'route', 'pbr_smoke4', 'rule', '10']
+        self.cli_set(policy_path + ['action', 'accept'])
+        self.cli_set(policy_path + ['set', 'vrf', vrf_name])
+        self.cli_set(policy_path + ['source', 'address', '192.0.2.1/32'])
+
+        policy6_path = ['policy', 'route6', 'pbr_smoke6', 'rule', '10']
+        self.cli_set(policy6_path + ['action', 'accept'])
+        self.cli_set(policy6_path + ['set', 'vrf', vrf_name])
+        self.cli_set(policy6_path + ['source', 'address', '2001:db8::/56'])
+
+        local_policy_path = ['policy', 'local-route', 'rule', '10']
+        self.cli_set(local_policy_path + ['set', 'vrf', vrf_name])
+        self.cli_set(local_policy_path + ['source', 'address', '192.0.2.1/32'])
+
+        local_policy6_path = ['policy', 'local-route6', 'rule', '10']
+        self.cli_set(local_policy6_path + ['set', 'vrf', vrf_name])
+        self.cli_set(local_policy6_path + ['source', 'address', '2001:db8::/56'])
+
+        self.cli_commit()
+
+        self.cli_delete(base_path)
+        # check validate() - VRF referenced in policy based routing
+        with self.assertRaises(ConfigSessionError):
+            self.cli_commit()
+        self.cli_delete(['policy', 'route'])
+        # check validate() - VRF referenced in policy based routing
+        with self.assertRaises(ConfigSessionError):
+            self.cli_commit()
+        self.cli_delete(['policy', 'route6'])
+        # check validate() - VRF referenced in policy based routing
+        with self.assertRaises(ConfigSessionError):
+            self.cli_commit()
+        self.cli_delete(['policy', 'local-route'])
+        # check validate() - VRF referenced in policy based routing
+        with self.assertRaises(ConfigSessionError):
+            self.cli_commit()
+        self.cli_delete(['policy', 'local-route6'])
+
+        self.cli_commit()
 
     def test_dhcp_single_pool(self):
         # Prepare the vrf and options

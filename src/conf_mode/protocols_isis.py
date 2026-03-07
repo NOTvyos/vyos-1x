@@ -48,7 +48,8 @@ def verify(config_dict):
         vrf = config_dict['vrf_context']
 
     # eqivalent of the C foo ? 'a' : 'b' statement
-    isis = vrf and config_dict['vrf']['name'][vrf]['protocols']['isis'] or config_dict['isis']
+    isis = vrf and dict_search(f'vrf.name.{vrf}.protocols.isis',
+                                 config_dict) or config_dict['isis']
     isis['policy'] = config_dict['policy']
 
     if 'deleted' in isis:
@@ -250,6 +251,15 @@ def verify(config_dict):
     if dict_search('fast_reroute.lfa.remote.prefix_list', isis):
         if int(len(isis['fast_reroute']['lfa']['remote']['prefix_list'].items())) > 1:
             raise ConfigError(f'LFA remote prefix-list has more than one configured. Cannot have more than one configured.')
+
+    # Check for lsp-timers violations
+    # Must be in sync with FRR yang limitations in yang/frr-isisd.yang
+    if int(isis['lsp_gen_interval']) >= int(isis['lsp_refresh_interval']):
+        raise ConfigError(f'lsp-gen-interval must be less then lsp-refresh-interval')
+    if int(isis['max_lsp_lifetime']) < int(isis['lsp_refresh_interval']) + 300:
+        raise ConfigError(
+            f'max-lsp-lifetime must be greater or equal to lsp-refresh-interval + 300'
+        )
 
     return None
 
